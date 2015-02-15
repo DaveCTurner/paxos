@@ -27,6 +27,7 @@ import Control.Monad
 import Control.Concurrent.Async
 import Control.Concurrent hiding (readChan, writeChan)
 import Control.Concurrent.STM
+import System.Timeout
 
 import qualified Control.Concurrent.UnreliableChan as U
 
@@ -67,12 +68,25 @@ handleActions name network = mapM_ (\a -> writeChan network (name, a))
 runProposer :: MVar Value -> String -> Quorum -> P.ProposalId NodeId -> Value -> MessageChannel -> NetworkChannel -> IO ()
 runProposer lock name q p v chan network = do
     info $ "Running proposer for proposal " ++ show p
-    myThreadId >>= void . forkIO . runWatcher
 
     handleActions name network actions0
     debug $ "Initial actions: " ++ show actions0
 
-    loop state0
+    proposalTimeout <- randomRIO (800000, 1600000)
+    loopResult <- timeout proposalTimeout $ loop state0
+    case loopResult of
+      Nothing -> do
+        debug $ "Proposal timed out - bump and retry"
+        -- TODO back off timeout?
+        runProposer lock name q (P.succProposalId p) v chan network
+
+      Just Nothing -> do
+        info "Learners all learned the value, all done"
+
+      Just (Just newerProposal) -> do
+        randomRIO timeoutBounds >>= threadDelay
+        runProposer lock name q (P.bumpProposalId p newerProposal) v chan network
+
   where
     (state0, actions0) = P.startRound q p v
     loop state = tryReadMVar lock >>= \case
@@ -84,6 +98,7 @@ runProposer lock name q p v chan network = do
 
               Left newerProposal -> do
                 debug $ "Proposal superseded by " ++ show newerProposal ++ " - abandoning"
+                return (Just newerProposal)
 
               Right (state', actions) -> do
                 debug $ "Actions: " ++ show actions
@@ -91,20 +106,9 @@ runProposer lock name q p v chan network = do
                 loop state'
 
             _ -> loop state
-      _ -> return ()
+      _ -> return Nothing
 
     timeoutBounds = (0, 800000)
-    runWatcher tid = do
-        -- If no value is chosen in this timeframe, start a new round
-        threadDelay 800000
-        tryReadMVar lock >>= \case
-            Nothing -> do
-                -- Some random delay to give other proposers a chance
-                randomRIO timeoutBounds >>= threadDelay
-                killThread tid
-                runProposer lock name q (P.succProposalId p) v chan network
-            Just _ ->
-                info "Learner learned a value, all done"
 
     debug = debugM name
     info = infoM name
