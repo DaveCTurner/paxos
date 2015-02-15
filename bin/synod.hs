@@ -27,7 +27,7 @@ import Control.Monad
 import Control.Concurrent.Async
 import Control.Concurrent hiding (readChan, writeChan)
 import Control.Concurrent.STM
-import System.Timeout
+import qualified System.Timeout
 
 import qualified Control.Concurrent.UnreliableChan as U
 
@@ -73,7 +73,7 @@ runProposer lock name q p v chan network = do
     debug $ "Initial actions: " ++ show actions0
 
     proposalTimeout <- randomRIO (800000, 1600000)
-    loopResult <- timeout proposalTimeout $ loop state0
+    loopResult <- System.Timeout.timeout proposalTimeout $ loop state0
     case loopResult of
       Nothing -> do
         debug $ "Proposal timed out - bump and retry"
