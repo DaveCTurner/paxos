@@ -80,11 +80,16 @@ runProposer lock name q p v chan network = do
         (sender, msg) <- readChan chan
         debug $ "Received message from '" ++ sender ++ "': " ++ show msg
         case msg of
-            MsgPromise m -> do
-                let (state', actions) = P.handlePromise state sender m
+            MsgPromise m -> case P.handlePromise state sender m of
+
+              Left newerProposal -> do
+                debug $ "Proposal superseded by " ++ show newerProposal ++ " - abandoning"
+
+              Right (state', actions) -> do
                 debug $ "Actions: " ++ show actions
                 handleActions name network actions
                 loop state'
+
             _ -> loop state
       _ -> return ()
 

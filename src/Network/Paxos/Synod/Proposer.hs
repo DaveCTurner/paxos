@@ -29,6 +29,7 @@ module Network.Paxos.Synod.Proposer (
     , ProposalId
     , initialProposalId
     , succProposalId
+    , bumpProposalId
 
     -- * Testing
     , tests
@@ -111,19 +112,20 @@ prop_startRound2 q p v = actions == [Broadcast Acceptors $ MsgPrepare $ Prepare 
 handlePromise :: Ord nodeId => ProposerState nodeId value
                             -> nodeId  -- ^ Identifier of the node from which the message was received
                             -> Promise nodeId value  -- ^ Received message
-                            -> (ProposerState nodeId value, [Action nodeId value])
-handlePromise state acceptor (Promise proposalId' highestAccepted') = execRWS go () state
+                            -> Either (ProposalId nodeId) (ProposerState nodeId value, [Action nodeId value])
+handlePromise state acceptor (Promise proposalId' highestAccepted')
+  = case compare proposalId' (proposalId state) of
+    -- Promises of proposals newer than the one we're handling are ignored,
+    -- although we might want to send a hint to the manager he might want
+    -- to restart a round with a higher proposal number
+    LT -> Right (state, [])
+
+    GT -> Left proposalId' -- start a new round
+
+    EQ -> Right $ execRWS go () state
+
   where
-    go = case compare proposalId' (proposalId state) of
-
-      -- Promises of proposals newer than the one we're handling are ignored,
-      -- although we might want to send a hint to the manager he might want
-      -- to restart a round with a higher proposal number
-      LT -> return ()
-
-      GT -> return () -- TODO start a new round?
-
-      _  -> unless (acceptor `elem` acceptors state) $ do
+    go = unless (acceptor `elem` acceptors state) $ do
 
         -- Select the `AcceptedValue' to remember: this is the maximum of the
         -- one we received before (if any) and the one contained in this
@@ -158,10 +160,13 @@ prop_handlePromise :: ProposerState Int ()
                    -> Promise Int ()
                    -> Bool
 prop_handlePromise state acceptor p@(Promise proposalId' highestAccepted')
-    | proposalId' /= proposalId state = result == (state, [])
-    | otherwise =
-        if acceptor `elem` acceptors state
-            then result == (state, [])
+    | proposalId' < proposalId state = result == Right (state, [])
+    | proposalId' > proposalId state = result == Left proposalId'
+    | otherwise = let
+        (Right (state', actions)) = result
+        value' = maybe (value state') (\(AcceptedValue _ v) -> v) (highestAccepted state')
+        in if acceptor `elem` acceptors state
+            then result == Right (state, [])
             else and [ acceptor `elem` acceptors state'
                      , length (acceptors state') == length (acceptors state) + 1
                      , highestAccepted state' == max (highestAccepted state) highestAccepted'
@@ -170,9 +175,7 @@ prop_handlePromise state acceptor p@(Promise proposalId' highestAccepted')
                            (actions == [Broadcast Acceptors $ MsgAccept $ Accept (proposalId state') value'])
                      ]
   where
-    result@(state', actions) = handlePromise state acceptor p
-    value' = maybe (value state') (\(AcceptedValue _ v) -> v) (highestAccepted state')
-
+    result = handlePromise state acceptor p
 
 -- | Tests
 tests :: Test
