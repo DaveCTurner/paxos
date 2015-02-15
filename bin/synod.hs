@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 {- Paxos - Implementations of Paxos-related consensus algorithms
  -
  - Copyright (C) 2012  Nicolas Trangez
@@ -22,6 +24,7 @@ module Main (main) where
 
 import Control.Monad
 
+import Control.Concurrent.Async
 import Control.Concurrent hiding (readChan, writeChan)
 import Control.Concurrent.STM
 
@@ -72,7 +75,8 @@ runProposer lock name q p v chan network = do
     loop state0
   where
     (state0, actions0) = P.startRound q p v
-    loop state = do
+    loop state = tryReadMVar lock >>= \case
+      Nothing -> do
         (sender, msg) <- readChan chan
         debug $ "Received message from '" ++ sender ++ "': " ++ show msg
         case msg of
@@ -82,13 +86,13 @@ runProposer lock name q p v chan network = do
                 handleActions name network actions
                 loop state'
             _ -> loop state
+      _ -> return ()
 
     timeoutBounds = (0, 800000)
     runWatcher tid = do
         -- If no value is chosen in this timeframe, start a new round
         threadDelay 800000
-        decission <- tryTakeMVar lock
-        case decission of
+        tryReadMVar lock >>= \case
             Nothing -> do
                 -- Some random delay to give other proposers a chance
                 randomRIO timeoutBounds >>= threadDelay
@@ -123,8 +127,8 @@ runAcceptor i chan network = loop state0
     name = "acceptor" ++ show i
     debug = debugM name
 
-runLearner :: Int -> Quorum -> MessageChannel -> NetworkChannel -> MVar Value -> IO ()
-runLearner i q chan _network lock = loop state0
+runLearner :: Int -> Quorum -> MessageChannel -> NetworkChannel -> IO Value
+runLearner i q chan _network = loop state0
   where
     state0 = L.initialize q
     loop state = do
@@ -137,7 +141,7 @@ runLearner i q chan _network lock = loop state0
                     Nothing -> loop state'
                     Just v -> do
                         info $ "Learned value: " ++ show v
-                        putMVar lock v
+                        return v
             _ -> loop state
 
     name = "learner" ++ show i
@@ -175,32 +179,33 @@ main = do
 
     let proposers = [("proposer" ++ show i, chan) | (i, chan) <- zip [(0 :: Int) ..] proposerChans]
 
-    lock <- newEmptyMVar
-
     networkHandler <- forkIO $ runNetwork network proposers acceptorsChan learnersChan
 
     learners <- forM [0 .. numLearners - 1] $ \i -> do
                     chan <- atomically $ dupTChan learnersChan
-                    forkIO $ runLearner i q chan network lock
+                    async $ runLearner i q chan network
 
     acceptors <- forM [0 .. numAcceptors - 1] $ \i -> do
                     chan <- atomically $ dupTChan acceptorsChan
-                    forkIO $ runAcceptor i chan network
+                    async $ runAcceptor i chan network
 
+    resultVar <- newEmptyMVar
 
-    forM_ proposers $ \(name, chan) -> do
+    proposerAsyncs <- forM proposers $ \(name, chan) -> do
         timeout <- randomRIO (500, 10000)
         threadDelay timeout
         let msg = "Hello world, from " ++ name ++ "!"
-        void $ forkIO $ runProposer lock name q (P.initialProposalId name) msg chan network
+        async $ runProposer resultVar name q (P.initialProposalId name) msg chan network
 
-    result <- takeMVar lock
+    allResults@(result:_) <- mapM wait learners
+    putMVar resultVar result
 
-    mapM_ killThread acceptors
-    mapM_ killThread learners
+    mapM_ cancel acceptors
+    mapM_ cancel proposerAsyncs
     killThread networkHandler
 
     putStrLn $ "Learned value: " ++ result
+    putStrLn $ "All learned values equal: " ++ show (all (== result) allResults)
 
   where
     numLearners, numAcceptors, numProposers :: Int

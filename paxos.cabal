@@ -42,6 +42,7 @@ Executable synod
   Other-Modules:       Control.Concurrent.UnreliableChan
   Build-Depends:       base >= 4 && < 5,
                        stm >= 2.4,
+                       async,
                        random,
                        hslogger,
                        paxos
