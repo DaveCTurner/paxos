@@ -51,15 +51,7 @@ import Test.QuickCheck (Arbitrary, arbitrary)
 
 -- | Representation of a proposal identifier
 data ProposalId nodeId = ProposalId {-# UNPACK #-} !Word64 nodeId
-  deriving (Show, Eq, Typeable)
-
--- Note: even though the following instance should be exactly the one
--- derived using `deriving(Ord)', I prefer to provide an explicit
--- implementation
-instance Ord nodeId => Ord (ProposalId nodeId) where
-    compare (ProposalId i1 n1) (ProposalId i2 n2)
-        | i1 /= i2 = compare i1 i2
-        | otherwise = compare n1 n2
+  deriving (Show, Eq, Typeable, Ord)
 
 instance Serialize nodeId => Serialize (ProposalId nodeId) where
     get = ProposalId <$> get <*> get
@@ -83,7 +75,7 @@ initialProposalId = ProposalId 1
 -- | Calculate a new 'ProposalId' which will be greater than the given one,
 -- retaining the node identifier
 succProposalId :: Ord nodeId
-               => ProposalId nodeId  -- ^ Proposal to increment
+               => ProposalId nodeId
                -> ProposalId nodeId
 succProposalId p = bumpProposalId p p
 
@@ -112,7 +104,7 @@ prop_bumpProposalId2 p1 p2 = p2' > p1'
     p1' = bumpProposalId p1 p2
     p2' = bumpProposalId p2 p1'
 
--- | Quorum number
+-- | Size of quorum
 newtype Quorum = Quorum { unQuorum :: Word }
   deriving (Show, Eq, Ord, Typeable)
 
