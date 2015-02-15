@@ -124,40 +124,34 @@ handlePromise state acceptor (Promise proposalId' highestAccepted') = execRWS go
       GT -> return () -- TODO start a new round?
 
       _  -> unless (acceptor `elem` acceptors state) $ do
-        Control.Monad.RWS.put state'
-        tell msgs
 
-    -- Updated state assuming
-    -- * The message is a promise matching the proposal number we're
-    --   handling
-    -- * A promise of this acceptor wasn't handled yet
-    state' = state { acceptors = acceptor : acceptors state
+        -- Select the `AcceptedValue' to remember: this is the maximum of the
+        -- one we received before (if any) and the one contained in this
+        -- message (again, if any)
+        let selectedAccepted = max (highestAccepted state) highestAccepted'
+
+        -- Retrieve the value to be distributed in an `Accept' message. This is
+        -- the value of the highest `AcceptedValue' we received as part of
+        -- `Promise' message, or the value passed by our user initially if
+        -- none.
+            value' = maybe (value state) (\(AcceptedValue _ v) -> v) selectedAccepted
+
+            acceptors' = acceptor : acceptors state
+
+        Control.Monad.RWS.put state
+                   { acceptors = acceptors'
                    , highestAccepted = selectedAccepted
                    }
 
-    -- Select the `AcceptedValue' to remember: this is the maximum of the
-    -- one we received before (if any) and the one contained in this
-    -- message (again, if any)
-    selectedAccepted = case highestAccepted state of
-                           Nothing -> highestAccepted'
-                           Just v -> case highestAccepted' of
-                               Nothing -> Just v
-                               Just v' -> Just $ max v v'
-    -- Actions to execute as a result of this state change
-    -- If we reached (but didn't exceed) the quorum (i.e. a quorum of
-    -- acceptors sent a promise for the current proposal), send an `Accept'
-    -- message to all Acceptors. The value contained in this command should
-    -- be the one of the highest `AcceptedValue' we received in any
-    -- `Promise', if any. Otherwise, we can use any value we want (or, more
-    -- likely, the one our user wants to distribute).
-    msgs = if length (acceptors state') /= fromIntegral (unQuorum $ quorum state')
-               then []
-               else [Broadcast Acceptors $ MsgAccept $ Accept (proposalId state') value']
-    -- Retrieve the value to be distributed in an `Accept' message. This is
-    -- the value of the highest `AcceptedValue' we received as part of
-    -- `Promise' message, or the value passed by our user initially if
-    -- none.
-    value' = maybe (value state') (\(AcceptedValue _ v) -> v) (highestAccepted state')
+        -- Actions to execute as a result of this state change
+        -- If we reached (but didn't exceed) the quorum (i.e. a quorum of
+        -- acceptors sent a promise for the current proposal), send an `Accept'
+        -- message to all Acceptors. The value contained in this command should
+        -- be the one of the highest `AcceptedValue' we received in any
+        -- `Promise', if any. Otherwise, we can use any value we want (or, more
+        -- likely, the one our user wants to distribute).
+        when (length acceptors' == fromIntegral (unQuorum $ quorum state))
+          $ tell [Broadcast Acceptors $ MsgAccept $ Accept (proposalId state) value']
 
 prop_handlePromise :: ProposerState Int ()
                    -> Int
