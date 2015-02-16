@@ -667,8 +667,10 @@ qed auto
 lemma (in paxosL) paxos_add_promise_Some:
   assumes accepted: "accepted a0 p1"
   and accepted_max: "\<And>p2. accepted a0 p2 \<Longrightarrow> p2 \<preceq> p1"
+  and promised_newer: "\<And>p mp. promised a0 p mp \<Longrightarrow> p \<prec> p0"
+  and promised_previous_accepts: "\<And>p2. accepted a0 p2 \<Longrightarrow> p2 \<prec> p0"
   shows "paxosL lt le quorate_proposer quorate_learner (%a p mp. (a, p, mp) = (a0, p0, Some p1) \<or> promised a p mp) proposed accepted chosen value"
-(*using assms promised_Some promised_Some_accepted promised_None chosen_quorum accepts_proposed*)
+using assms promised_Some promised_Some_accepted promised_None chosen_quorum accepts_proposed
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   show "\<forall>p. proposed p \<longrightarrow> (\<exists>S. quorate_proposer S \<and>
                             (\<forall>a2\<in>S. \<exists>mp. (a2, p, mp) = (a0, p0, Some p1) \<or> promised a2 p mp) 
@@ -685,7 +687,8 @@ proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
     proof (intro exI [where x = S] conjI ballI allI impI)
       from qS show "quorate_proposer S" .
       fix a2 assume a2S: "a2 \<in> S"
-      with S_promised show "\<exists>mp. (a2, p, mp) = (a0, p0, Some p1) \<or> promised a2 p mp" by auto
+      with S_promised obtain mp2 where mp2: "promised a2 p mp2" by auto
+      thus "\<exists>mp. (a2, p, mp) = (a0, p0, Some p1) \<or> promised a2 p mp" by auto
       fix p2 assume p2: "(a2, p, Some p2) = (a0, p0, Some p1) \<or> promised a2 p (Some p2)"
       thus "value p = value p2 \<or> (\<exists>a3\<in>S. \<exists>p3. ((a3, p, Some p3) = (a0, p0, Some p1) \<or> promised a3 p (Some p3)) \<and> p2 \<prec> p3)"
       proof (elim disjE)
@@ -693,19 +696,36 @@ proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
         from S_max [OF a2S this] show ?thesis by auto
       next
         assume "(a2, p, Some p2) = (a0, p0, Some p1)"
-        hence eqs: "a2 = a0" "p = p0" "p2 = p1" by simp_all
-        show ?thesis
-        proof (unfold eqs)
-        proof (intro disjI2 bexI exI, intro conjI disjI1)
-          show "(a2, p, Some p2) = (a0, p0, Some p1)" by (simp add: eqs)
+        hence pp0: "p = p0" and a02: "a2 = a0" by simp_all
+        from mp2 promised_newer have "p \<prec> p0" by (auto simp add: a02)
+        with pp0 show ?thesis by simp
+      qed
+    qed
+  qed
 
+  from promised_Some_accepted
+  show "\<forall>a1 p2 p3. (a1, p2, Some p3) = (a0, p0, Some p1) \<or> promised a1 p2 (Some p3) \<longrightarrow> accepted a1 p3 \<and> p3 \<prec> p2"
+  proof (intro allI impI, elim disjE)
+    fix a0' p0' p1' assume "(a0', p0', Some p1') = (a0, p0, Some p1)"
+    with accepted promised_previous_accepts show "accepted a0' p1' \<and> p1' \<prec> p0'" by auto
+  qed
 
-  sorry
-
-  show "\<forall>a p0a p1a. (a, p0a, Some p1a) = (a0, p0, Some p1) \<or> promised a p0a (Some p1a) \<longrightarrow> accepted a p1a \<and> p1a \<prec> p0a"
-  sorry
-
-  show "\<forall>a p0a p1a p2. (a, p0a, Some p1a) = (a0, p0, Some p1) \<or> promised a p0a (Some p1a) \<longrightarrow> accepted a p2 \<longrightarrow> p2 \<prec> p0a \<longrightarrow> p1a = p2 \<and> value p1a = value p0a \<or> p2 \<prec> p1a"
-  sorry
+  from promised_Some
+  show "\<forall>a1 p2 p3 p4. (a1, p2, Some p3) = (a0, p0, Some p1) \<or> promised a1 p2 (Some p3)
+      \<longrightarrow> accepted a1 p4 \<longrightarrow> p4 \<prec> p2 \<longrightarrow> p3 = p4 \<and> value p3 = value p2 \<or> p4 \<prec> p3"
+  proof (intro allI impI, elim disjE)
+    fix a0' p0' p1' assume eq: "(a0', p0', Some p1') = (a0, p0, Some p1)"
+    fix p4 assume acc: "accepted a0' p4" and p40: "p4 \<prec> p0'"
+    show "(p1' = p4 \<and> value p1' = value p0') \<or> p4 \<prec> p1'"
+    proof (cases rule: propNo_cases)
+      assume "p1' \<prec> p4" 
+      also from eq acc accepted_max have "p4 \<preceq> p1'" by auto
+      finally show ?thesis by simp
+    next
+      assume p14: "p1' = p4"
+      have "value p1 = value p0" sorry
+      with eq p14 show ?thesis by simp
+    qed simp
+  qed
 qed simp_all
 
