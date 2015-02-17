@@ -1,6 +1,6 @@
 # Safety proof
 
-The file `Paxos.thy` contains an Isabelle-checked proof of the safety property of Paxos. Less formally:
+The file [Paxos.thy](Paxos.thy) contains an Isabelle-checked proof of the safety property of Paxos. Less formally:
 
 Let 
 - `pid` be the type of proposal identifiers and `acc` the type of acceptors,
