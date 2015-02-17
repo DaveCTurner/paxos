@@ -32,10 +32,12 @@ module Network.Paxos.Synod.Learner (
 
 import Control.Applicative
 
-import Data.Maybe (fromJust, isNothing)
+import Data.Maybe (isNothing)
 
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 
 import Data.Word (Word32)
 import Data.Serialize
@@ -51,8 +53,7 @@ import Network.Paxos.Synod.Messages hiding (tests)
 
 -- | State of a Learner
 data LearnerState nodeId value = Learning { quorum :: Quorum
-                                          , highestAccepted :: Map nodeId (ProposalId nodeId)
-                                          , accepted :: Map (ProposalId nodeId) [nodeId]
+                                          , accepted :: Map (ProposalId nodeId) (Set nodeId)
                                           }
                                | Decided value
   deriving (Show, Eq)
@@ -68,14 +69,14 @@ instance (Ord nodeId, Serialize nodeId, Serialize value) => Serialize (LearnerSt
             else do
                 tag <- getWord8
                 case tag of
-                    1 -> Learning <$> get <*> get <*> get
+                    1 -> Learning <$> get <*> get
                     2 -> Decided <$> get
                     _ -> fail "LearnerState: invalid tag"
 
     put state = do
         putWord32le serial
         case state of
-            Learning a b c -> putWord8 1 >> put a >> put b >> put c
+            Learning a b -> putWord8 1 >> put a >> put b
             Decided a -> putWord8 2 >> put a
 
 instance (Ord nodeId, Arbitrary nodeId, Arbitrary value) => Arbitrary (LearnerState nodeId value) where
@@ -96,14 +97,12 @@ instance (Ord nodeId, Arbitrary nodeId, Arbitrary value) => Arbitrary (LearnerSt
 initialize :: Quorum  -- ^ Number of nodes which form a quorum
            -> LearnerState nodeId value
 initialize quorum' = Learning { quorum = quorum'
-                              , highestAccepted = Map.empty
                               , accepted = Map.empty
                               }
 
 prop_initialize :: Quorum -> Bool
 prop_initialize quorum' = and [ isNothing $ getValue state
                               , quorum state == quorum'
-                              , Map.null $ highestAccepted state
                               , Map.null $ accepted state
                               ]
   where
@@ -119,55 +118,12 @@ handleAccepted :: Ord nodeId
 handleAccepted state acceptor (Accepted proposalId value) =
     case state of
         Decided _ -> state
-        Learning{} ->
-            if acceptor `Map.member` highestAccepted state
-                then if highestProposalId >= proposalId
-                    then state
-                    else handleMember state
-                else handleNotMember state
+        Learning{} -> case Map.lookup proposalId accepted' of
+          Just s | Set.size s == fromIntegral (unQuorum (quorum state)) -> Decided value
+          _ -> state { accepted = accepted' }
+
   where
-    Just highestProposalId = Map.lookup acceptor (highestAccepted state)
-
-    listToMaybe l
-        | null l = Nothing
-        | otherwise = Just l
-
-    handleMember s = handleNotMember $ s { accepted = Map.update (listToMaybe . filter (/= acceptor)) highestProposalId (accepted s) }
-
-    -- TODO This is plain ugly
-    handleNotMember s = check proposalId $ s { highestAccepted = Map.insert acceptor proposalId (highestAccepted s)
-                                             , accepted = Map.adjust ((:) acceptor) proposalId (accepted s `Map.union` Map.singleton proposalId [])
-                                             }
-
-    check p s =
-        if maybe 0 length (Map.lookup p (accepted s)) == fromIntegral (unQuorum (quorum s))
-            then Decided value
-            else s
-
-prop_handleAccepted1 :: LearnerState Int () -> Int -> Accepted Int () -> Bool
-prop_handleAccepted1 state acceptor msg@(Accepted proposalId _) =
-    isDecided || (fromJust (Map.lookup acceptor (highestAccepted state')) >= proposalId)
-  where
-    state' = handleAccepted state acceptor msg
-    isDecided = case state' of
-                    Decided _ -> True
-                    Learning{} -> False
-
-prop_handleAccepted2 :: LearnerState Int () -> Int -> Accepted Int () -> Bool
-prop_handleAccepted2 state acceptor msg
-    | isDecided = True
-    | otherwise = acceptor `elem` list
-  where
-    state' = handleAccepted state acceptor msg
-    isDecided = case state' of
-                    Decided _ -> True
-                    Learning{} -> False
-    Just p = Map.lookup acceptor (highestAccepted state')
-    Just list = Map.lookup p (accepted state')
-
--- TODO Add property/test to check `Decided' is returned once quorum is
--- reached
-
+    accepted' = Map.insertWith Set.union proposalId (Set.singleton acceptor) (accepted state)
 
 -- | Extract the learned value from the Learner state, if any.
 --
@@ -188,8 +144,6 @@ prop_getValue state = case state of
 tests :: Test
 tests = testGroup "Network.Paxos.Synod.Learner" [
               testProperty "initialize" prop_initialize
-            , testProperty "handleAccepted1" prop_handleAccepted1
-            , testProperty "handleAccepted2" prop_handleAccepted2
             , testProperty "getValue" prop_getValue
             , testProperty "LearnerState Serialize" $ prop_serialize (undefined :: LearnerState String Int)
             ]
