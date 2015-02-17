@@ -313,13 +313,33 @@ proof -
             qed
           next
             case (Some p)
-            from propNo
-            show ?thesis
-            proof (elim propNo_cases)
-              show ?thesis sorry
-              show ?thesis sorry
+            
+            from insert.hyps
+            have "?P2 (insert a S')"
+            proof (elim disjE)
+              assume "?P1 S'"
+              hence none_proposed: "\<And> a1 mp. \<lbrakk> a1 \<in> S'; promised a1 p0 mp \<rbrakk> \<Longrightarrow> mp = None" by simp
+              show ?thesis
+              proof (intro bexI exI conjI impI ballI allI)
+                show "a \<in> insert a S'" by simp
+                from mp Some show "promised a p0 (Some p)" by simp
+                fix a3 p3
+                assume "a3 \<in> insert a S'" and p: "promised a3 p0 (Some p3)"
+                with none_proposed have a3: "a3 = a" by auto
+                have "Some p = Some p3"
+                proof (intro promised_fun)
+                  from p show "promised a3 p0 (Some p3)" .
+                  from a3 Some mp show "promised a3 p0 (Some p)" by simp
+                qed
+                hence p3: "p = p3" by simp
+                with le_refl [OF propNo] show "leP p3 p" by simp
+              qed
+            next
+              assume "?P2 S'"
               show ?thesis sorry
             qed
+
+            thus ?thesis by simp
           qed
         qed
       qed
