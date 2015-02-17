@@ -392,8 +392,30 @@ proof -
                   qed
                 qed
               next
-                assume "ltP p1 p"
-                show ?thesis sorry
+                assume p1p: "ltP p1 p"
+                show ?thesis
+                proof (intro bexI exI conjI ballI allI impI)
+                  from mp Some show "promised a p0 (Some p)" by simp
+                  show "a \<in> insert a S'" by simp
+                  fix a3 p3
+                  assume "a3 \<in> insert a S'"
+                    and p3: "promised a3 p0 (Some p3)"
+                  hence "a3 = a \<or> a3 \<in> S'" by simp
+                  thus "leP p3 p"
+                  proof (elim disjE)
+                    assume a3: "a3 = a"
+                    have "Some p3 = Some p"
+                    proof (intro promised_fun [OF p3])
+                      from a3 mp Some show "promised a3 p0 (Some p)" by simp
+                    qed
+                    hence p3: "p3 = p" by simp
+                    with le_refl [OF propNo] show "leP p3 p" by simp
+                  next
+                    assume a3: "a3 \<in> S'"
+                    with p3 have "leP p3 p1" by (intro p1_max)
+                    with p1p show "leP p3 p" sorry
+                  qed
+                qed
               qed
             qed
 
