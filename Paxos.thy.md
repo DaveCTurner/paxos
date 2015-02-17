@@ -27,7 +27,13 @@ Given the following invariants:
   - `p2 < p1`
 - If `promised a p0 Nothing` and `accepted a p1` then `p0 < p1` or `p0 == p1`.
 
-Then any two chosen propositions have equal values.
+Then any two chosen propositions have equal `value`.
+
+This is the heart of the safety proof for Paxos. The predicates `promised`, `proposed`, `accepted` and `chosen` correspond to messages that may be sent. Pretty remarkable.
+
+Interestingly, there's no need to consider the passage of time or similar, which is how it remains safe even given arbitrary message loss, delay, and reordering.
+
+Of course, other messages can be sent without affecting this safety proof - in particular, you need to pass the actual values around somehow, and hold leadership elections and send negative acknowledgements and so on, and actually get the acceptors to promise things by sending the initial `prepare` message which is also notably absent here.
 
 
 
