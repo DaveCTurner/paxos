@@ -413,7 +413,13 @@ proof -
                   next
                     assume a3: "a3 \<in> S'"
                     with p3 have "leP p3 p1" by (intro p1_max)
-                    with p1p show "leP p3 p" sorry
+                    with p1p show "leP p3 p"
+                    proof (intro propNo_le_ltI [OF propNo], elim propNo_leE [OF propNo])
+                      assume p1p: "ltP p1 p" and p3p1: "ltP p3 p1"
+                      from propNo_trans_lt [OF propNo p3p1 p1p] show "ltP p3 p" .
+                      thus "ltP p3 p" .
+                      thus "ltP p3 p" .
+                    qed auto
                   qed
                 qed
               qed
