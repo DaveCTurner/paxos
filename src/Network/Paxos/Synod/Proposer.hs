@@ -47,6 +47,9 @@ import Test.Framework.Providers.QuickCheck2 (testProperty)
 
 import Test.QuickCheck (Arbitrary, arbitrary)
 
+import qualified Data.Set as Set
+import Data.Set(Set)
+
 import Network.Paxos.Synod.Action
 import Network.Paxos.Synod.Types hiding (quorum, tests)
 import Network.Paxos.Synod.Messages hiding (tests)
@@ -55,7 +58,7 @@ import Network.Paxos.Synod.Messages hiding (tests)
 data ProposerState nodeId value = ProposerState { proposalId :: ProposalId nodeId
                                                 , quorum :: Quorum
                                                 , value :: value
-                                                , acceptors :: [nodeId]
+                                                , acceptors :: Set nodeId
                                                 , highestAccepted :: Maybe (AcceptedValue nodeId value)
                                                 }
   deriving (Show, Eq)
@@ -63,7 +66,7 @@ data ProposerState nodeId value = ProposerState { proposalId :: ProposalId nodeI
 serial :: Word32
 serial = 0x20121213
 
-instance (Serialize nodeId, Serialize value) => Serialize (ProposerState nodeId value) where
+instance (Ord nodeId, Serialize nodeId, Serialize value) => Serialize (ProposerState nodeId value) where
     get = do
         serial' <- getWord32le
         if serial' /= serial
@@ -71,8 +74,8 @@ instance (Serialize nodeId, Serialize value) => Serialize (ProposerState nodeId 
             else ProposerState <$> get <*> get <*> get <*> get <*> get
     put (ProposerState a b c d e) = putWord32le serial >> put a >> put b >> put c >> put d >> put e
 
-instance (Arbitrary nodeId, Arbitrary value) => Arbitrary (ProposerState nodeId value) where
-    arbitrary = ProposerState <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+instance (Ord nodeId, Arbitrary nodeId, Arbitrary value) => Arbitrary (ProposerState nodeId value) where
+    arbitrary = ProposerState <$> arbitrary <*> arbitrary <*> arbitrary <*> (Set.fromList <$> arbitrary) <*> arbitrary
 
 
 -- | Start a single round using given quorum, `ProposalId' and value to propose
@@ -85,7 +88,7 @@ startRound quorum' proposalId' value' = (state, [msg])
     state = ProposerState { proposalId = proposalId'
                           , quorum = quorum'
                           , value = value'
-                          , acceptors = []
+                          , acceptors = Set.empty
                           , highestAccepted = Nothing
                           }
     msg = Broadcast Acceptors $ MsgPrepare $ Prepare proposalId'
@@ -94,7 +97,7 @@ prop_startRound1 :: Quorum -> ProposalId Int -> () -> Bool
 prop_startRound1 q p v = and [ proposalId s == p
                              , quorum s == q
                              , value s == v
-                             , null $ acceptors s
+                             , Set.null $ acceptors s
                              , isNothing $ highestAccepted s
                              ]
   where
@@ -122,7 +125,7 @@ handlePromise state acceptor (Promise proposalId' highestAccepted')
     -- The given proposal number matches the one this proposer is handling
     | otherwise =
         -- Check whether we already handled a promise of this acceptor
-        if acceptor `elem` acceptors state
+        if acceptor `Set.member` acceptors state
             -- If so, ignore the message (some message duplication occurred)
             then (state, [])
             -- All well, update state and return some actions (if any)
@@ -132,7 +135,7 @@ handlePromise state acceptor (Promise proposalId' highestAccepted')
     -- * The message is a promise matching the proposal number we're
     --   handling
     -- * A promise of this acceptor wasn't handled yet
-    state' = state { acceptors = acceptor : acceptors state
+    state' = state { acceptors = Set.insert acceptor $ acceptors state
                    , highestAccepted = selectedAccepted
                    }
     -- Select the `AcceptedValue' to remember: this is the maximum of the
@@ -150,7 +153,7 @@ handlePromise state acceptor (Promise proposalId' highestAccepted')
     -- be the one of the highest `AcceptedValue' we received in any
     -- `Promise', if any. Otherwise, we can use any value we want (or, more
     -- likely, the one our user wants to distribute).
-    msgs = if length (acceptors state') /= fromIntegral (unQuorum $ quorum state')
+    msgs = if Set.size (acceptors state') /= fromIntegral (unQuorum $ quorum state')
                then []
                else [Broadcast Acceptors $ MsgAccept $ Accept (proposalId state') value']
     -- Retrieve the value to be distributed in an `Accept' message. This is
@@ -166,13 +169,13 @@ prop_handlePromise :: ProposerState Int ()
 prop_handlePromise state acceptor p@(Promise proposalId' highestAccepted')
     | proposalId' /= proposalId state = result == (state, [])
     | otherwise =
-        if acceptor `elem` acceptors state
+        if acceptor `Set.member` acceptors state
             then result == (state, [])
-            else and [ acceptor `elem` acceptors state'
-                     , length (acceptors state') == length (acceptors state) + 1
+            else and [ acceptor `Set.member` acceptors state'
+                     , Set.size (acceptors state') == Set.size (acceptors state) + 1
                      , highestAccepted state' == max (highestAccepted state) highestAccepted'
                      , proposalId state' == proposalId state
-                     , (length (acceptors state') /= fromIntegral (unQuorum $ quorum state')) ||
+                     , (Set.size (acceptors state') /= fromIntegral (unQuorum $ quorum state')) ||
                            (actions == [Broadcast Acceptors $ MsgAccept $ Accept (proposalId state') value'])
                      ]
   where
