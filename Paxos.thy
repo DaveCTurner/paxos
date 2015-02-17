@@ -331,12 +331,47 @@ proof -
                   from p show "promised a3 p0 (Some p3)" .
                   from a3 Some mp show "promised a3 p0 (Some p)" by simp
                 qed
-                hence p3: "p = p3" by simp
+                hence "p = p3" by simp
                 with le_refl [OF propNo] show "leP p3 p" by simp
               qed
             next
               assume "?P2 S'"
-              show ?thesis sorry
+              then obtain a1 p1 where a1S: "a1 \<in> S'" and p: "promised a1 p0 (Some p1)"
+                and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S'; promised a3 p0 (Some p3) \<rbrakk> \<Longrightarrow> leP p3 p1" by auto
+              from propNo
+              show ?thesis
+              proof (elim propNo_cases)
+                assume p1p: "p1 = p"
+                show ?thesis
+                proof (intro bexI exI conjI ballI allI impI)
+                  from p show "promised a1 p0 (Some p1)" .
+                  from a1S show "a1 \<in> insert a S'" by simp
+                  fix a3 p3
+                  assume "a3 \<in> insert a S'"
+                    and p3: "promised a3 p0 (Some p3)"
+                  hence "a3 = a \<or> a3 \<in> S'" by simp
+                  thus "leP p3 p1"
+                  proof (elim disjE)
+                    assume a3: "a3 \<in> S'"
+                    show ?thesis by (intro p1_max [OF a3] p3)
+                  next
+                    assume a3: "a3 = a"
+                    have "Some p = Some p3"
+                    proof (intro promised_fun)
+                      from p3 show "promised a3 p0 (Some p3)" .
+                      from a3 Some mp show "promised a3 p0 (Some p)" by simp
+                    qed
+                    hence "p = p3" by simp
+                    with le_refl [OF propNo] p1p show "leP p3 p1" by simp
+                  qed
+                qed
+              next
+                assume "ltP p1 p"
+                show ?thesis sorry
+              next
+                assume "ltP p p1"
+                show ?thesis sorry
+              qed
             qed
 
             thus ?thesis by simp
