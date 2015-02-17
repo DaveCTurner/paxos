@@ -141,7 +141,7 @@ theorem
   shows "\<And> p1 p2. \<lbrakk> chosen p1; chosen p2 \<rbrakk> \<Longrightarrow> value p1 = value p2"
 proof -
 
-  have promised_fun: "\<And>a p0 mp1 mp2. \<lbrakk> promised a p0 mp1; promised a p0 mp2 \<rbrakk> \<Longrightarrow> mp1 == mp2"
+  have promised_fun: "\<And>a p0 mp1 mp2. \<lbrakk> promised a p0 mp1; promised a p0 mp2 \<rbrakk> \<Longrightarrow> mp1 = mp2"
   proof -
     fix a p0
     have somenone: "\<And>p1 P. \<lbrakk> promised a p0 (Some p1); promised a p0 None \<rbrakk> \<Longrightarrow> P"
@@ -158,7 +158,7 @@ proof -
 
     fix mp1
     assume "promised a p0 mp1"
-    thus "\<And>mp2. promised a p0 mp2 \<Longrightarrow> mp1 == mp2"
+    thus "\<And>mp2. promised a p0 mp2 \<Longrightarrow> mp1 = mp2"
     proof (induct mp1)
       case (Some p1)
       thus ?case
@@ -269,10 +269,47 @@ proof -
             show ?thesis
             proof (elim disjE)
               assume hyp1: "?P1 S'"
-              show ?thesis sorry
+              show ?thesis 
+              proof (intro disjI1 ballI allI impI)
+                fix a1 mp'
+                assume "a1 \<in> insert a S'" and p: "promised a1 p0 mp'"
+                hence "a1 = a \<or> a1 \<in> S'" by simp
+                thus "mp' = None"
+                proof (elim disjE)
+                  assume eq: "a1 = a"
+                  show "mp' = None"
+                  proof (intro promised_fun)
+                    from mp None show "promised a p0 None" by simp
+                    from eq p show "promised a p0 mp'" by simp
+                  qed
+                next
+                  assume mem: "a1 \<in> S'"
+                  from hyp1 mem p
+                  show "mp' = None" by auto
+                qed
+              qed
             next
               assume hyp2: "?P2 S'"
-              show ?thesis sorry
+              then obtain a1 p1 where a1S: "a1 \<in> S'" and p: "promised a1 p0 (Some p1)"
+                and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S'; promised a3 p0 (Some p3) \<rbrakk> \<Longrightarrow> leP p3 p1"
+                by auto
+              show ?thesis
+              proof (intro disjI2 bexI exI conjI impI ballI allI)
+                from p show "promised a1 p0 (Some p1)" .
+                from a1S show "a1 \<in> insert a S'" by simp
+                fix a3 p3 assume "a3 \<in> insert a S'" and p: "promised a3 p0 (Some p3)"
+                hence "a3 = a \<or> a3 \<in> S'" by simp
+                thus "leP p3 p1"
+                proof (elim disjE)
+                  assume "a3 = a"
+                  with p have p: "promised a p0 (Some p3)" by simp
+                  have "Some p3 = mp" by (intro promised_fun [OF p mp])
+                  with None show ?thesis by simp
+                next
+                  assume a3: "a3 \<in> S'"
+                  with p show ?thesis by (intro p1_max, auto)
+                qed
+              qed
             qed
           next
             case (Some p)
