@@ -602,3 +602,17 @@ lemma (in paxosL) paxos_change_quorum_learner:
 using assms proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
   by (unfold paxosL_def paxosL_axioms_def, intro conjI, simp_all)
 
+lemma (in paxosL) paxos_change_quorum_unchosen:
+  assumes "quorumL quorum_proposer quorum_learner'"
+  assumes "\<And>p. chosen p \<Longrightarrow> quorum_learner' p = quorum_learner p"
+  shows "paxosL lt le quorum_proposer quorum_learner' promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
+using assms proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
+  by (unfold paxosL_def paxosL_axioms_def, intro conjI, simp_all)
+
+lemma (in paxosL) paxos_change_quorum_superset:
+  assumes "quorumL quorum_proposer quorum_learner'"
+  assumes "\<And>p S. \<lbrakk> quorum_learner p S \<rbrakk> \<Longrightarrow> quorum_learner' p S"
+  shows "paxosL lt le quorum_proposer quorum_learner' promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
+using assms chosen_quorum
+  by (intro paxos_change_quorum_learner, simp, metis)
+
