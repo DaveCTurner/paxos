@@ -3,31 +3,40 @@
 The file [Paxos.thy](Paxos.thy) contains an Isabelle-checked proof of the safety property of Paxos. Less formally:
 
 Let 
-- `pid` be the type of proposal identifiers and `acc` the type of acceptors,
-- `<` be an ordering on `pid` which is transitive, wellfounded, and total,
-- `Q` be a collection of finite subsets of `acc` which pairwise intersect (an element of `Q` is a quorum of acceptors),
+- `pid` be the type of proposal identifiers,
+- `acc` the type of acceptors,
+- `val` the type of values of proposals,
+- `<` be an ordering on `pid` which is transitive, wellfounded and total,
+- `QP` and `QL` be collections of finite subsets of `acc` such that
+  - every member of `QP` intersects every member of `QL`,
+  - every member of `QP` is finite,
+  - `QP` is nonempty
 - `promised` be a ternary relation on `acc * pid * Maybe pid`,
 - `accepted` be a binary relation on `acc * pid`, and
 - `proposed` and `chosen` be sets of proposal identifiers,
-- `value` a function `pid -> v` where `v` is the type of values of propositions.
+- `v` be a function `pid -> val`, and
+- `vP` and `vA` be functions `acc -> pid -> val`.
+
+Intuitively, `QP` and `QL` are the collections of quorums from the Proposers' and Learners' points of view respectively. (`QP` and `QL` may differ to allow the membership of the group of acceptors to change). The predicates `promised`, `proposed`, `accepted` and `chosen` represent the messages that have been sent (but not necessarily received or processed by all other agents). The function `v` gives the values of proposals which have been proposed, and `vP` (resp. `vA`) gives the values of proposals that each acceptor has promised (resp. accepted).
 
 Given the following invariants:
 
-- If `chosen p` then there exists a quorum `S` such that if `a ∈ S` then `accepted a p`.
-- If `proposed p` then there exists a quorum `S` such that if `a ∈ S` then `promised a p _`, and either
+- If `chosen p` then there exists a quorum `S ∈ QL` such that if `a ∈ S` then `accepted a p`.
+- If `proposed p` then there exists a quorum `S ∈ QP` such that if `a ∈ S` then `promised a p _`, and either
   - `promised a p Nothing` for all `a ∈ S`, or
   - for each `a1 ∈ S` with `promised a1 p (Just p1)`, either
-    - `value p == value p1`, or
+    - `v p == vP a1 p`, or
     - there is an `a2 ∈ S` with `promised a2 p (Just p2)` and `p1 < p2`.
 - If `accepted a p` then `proposed p`.
+- If `accepted a p` then `v p == vA a p`.
 - If `promised a p0 (Just p1)` then `accepted a p1`.
 - If `promised a p0 (Just p1)` then `p1 < p0`.
 - If `promised a p0 (Just p1)` and `accepted a p2` and `p2 < p0` then either
-  - `p1 == p2` and `value p1 == value p0`, or
+  - `p1 == p2` and `vP p0 == vA p1`, or
   - `p2 < p1`
 - If `promised a p0 Nothing` and `accepted a p1` then `p0 < p1` or `p0 == p1`.
 
-Then any two chosen propositions have equal `value`.
+Then any two chosen propositions `p1` and `p2` have `v p1 == v p2`. This is theorem `paxos_consistent` in the theory file.
 
 This is the heart of the safety proof for Paxos. The predicates `promised`, `proposed` and `accepted` correspond to messages that may be sent. Pretty remarkable.
 
@@ -40,3 +49,25 @@ The first invariant is for the Learner agents to satisfy. They do so by collecti
 The second invariant is for the Proposer agent to satisfy. It does so by collecting `promised` messages until it has an agreeing quorum. The quorum it collects may determine the `value` of the proposition (second disjunct); if it does not (first disjunct) then the Proposer may freely choose its value without breaking this invariant.
 
 The remaining five invariants are the responsibility of the Acceptor agents, and can be satisfied by tracking simply the greatest promosed id and the greatest accepted id.
+
+## Preserving invariants
+
+The remainder of the file shows that the empty model (containing no messages) is safe and shows some conditions under which a safe model can be modified (by sending a message or updating one of the value functions) into another safe model: 
+
+### For a proposer:
+
+1. If there's a quorum of acceptors `S ∈ QP` that all promised to accept a proposal `p` with no prior value (i.e. `promised a p None` for all `a ∈ S`) then `p` can be proposed.
+2. If there's a quorum of acceptors `S ∈ QP` that all promised to accept a proposal `p` but some of them sent a prior value (i.e. `promised a p _` for all `a ∈ S` and `promised a p (Just p')` for some `a ∈ S`) then  `p` can be proposed as long as its value matches the value of the response with the highest identifier.
+3. The value of a proposal can be changed as long as it has not already been proposed.
+
+### For a learner:
+
+1. If there's a quorum of acceptors `S ∈ QP` that all accept a proposal then that proposal can be chosen.
+
+### For an acceptor
+
+1. If an acceptor has accepted no proposals then it may promise to accept anything, with no prior value.
+2. If an acceptor has accepted some proposals then it may promise to accept any later proposals, as long as it includes the identifier of the highest proposal it has previously accepted and as long as the values `vP` and `vA` agree where promises are made.
+3. An acceptor may accept a proposal as long as it has been proposed, and it hasn't promised to accept later proposals, and the value of `vA` agrees with the value of the proposal itself.
+4. An acceptor may update `vP` for any proposals for which it has not sent a promise.
+5. An acceptor may update `vA` for any proposals which it has not accepted.
