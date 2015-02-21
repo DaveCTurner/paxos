@@ -49,3 +49,25 @@ The first invariant is for the Learner agents to satisfy. They do so by collecti
 The second invariant is for the Proposer agent to satisfy. It does so by collecting `promised` messages until it has an agreeing quorum. The quorum it collects may determine the `value` of the proposition (second disjunct); if it does not (first disjunct) then the Proposer may freely choose its value without breaking this invariant.
 
 The remaining five invariants are the responsibility of the Acceptor agents, and can be satisfied by tracking simply the greatest promosed id and the greatest accepted id.
+
+## Preserving invariants
+
+The remainder of the file shows that the empty model (containing no messages) is safe and shows some conditions under which a safe model can be modified (by sending a message or updating one of the value functions) into another safe model: 
+
+### For a proposer:
+
+1. If there's a quorum of acceptors `S ∈ QP` that all promised to accept a proposal `p` with no prior value (i.e. `promised a p None` for all `a ∈ S`) then `p` can be proposed.
+2. If there's a quorum of acceptors `S ∈ QP` that all promised to accept a proposal `p` but some of them sent a prior value (i.e. `promised a p _` for all `a ∈ S` and `promised a p (Just p')` for some `a ∈ S`) then  `p` can be proposed as long as its value matches the value of the response with the highest identifier.
+3. The value of a proposal can be changed as long as it has not already been proposed.
+
+### For a learner:
+
+1. If there's a quorum of acceptors `S ∈ QP` that all accept a proposal then that proposal can be chosen.
+
+### For an acceptor
+
+1. If an acceptor has accepted no proposals then it may promise to accept anything, with no prior value.
+2. If an acceptor has accepted some proposals then it may promise to accept any later proposals, as long as it includes the identifier of the highest proposal it has previously accepted and as long as the values `vP` and `vA` agree where promises are made.
+3. An acceptor may accept a proposal as long as it has been proposed, and it hasn't promised to accept later proposals, and the value of `vA` agrees with the value of the proposal itself.
+4. An acceptor may update `vP` for any proposals for which it has not sent a promise.
+5. An acceptor may update `vA` for any proposals which it has not accepted.
