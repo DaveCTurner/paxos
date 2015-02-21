@@ -25,17 +25,11 @@ lemma (in propNoL) propNo_leE [elim]:
   and lt: "p1 \<prec> p2 \<Longrightarrow> P"
   and eq: "p1 = p2 \<Longrightarrow> P"
   shows P
-  using assms local.le_lt_eq by (auto)
+  using assms local.le_lt_eq by auto
 
 lemma (in propNoL) propNo_irreflexive [simp]:
   shows "\<not> p \<prec> p"
-proof
-  assume pp: "p \<prec> p"
-  hence "(p,p) \<in> {(p1,p2). p1 \<prec> p2}" by simp
-  also have "... \<subseteq> trancl ..." by auto
-  finally have "(p,p) \<in> ..." .
-  with propNo_acyclic show False by (auto simp add: acyclic_def)
-qed 
+  by (metis local.wf mem_Collect_eq old.prod.case wf_irrefl)
 
 lemma (in propNoL) propNo_trans_lt_lt [trans]:
   "p1 \<prec> p2 \<Longrightarrow> p2 \<prec> p3 \<Longrightarrow> p1 \<prec> p3"
@@ -45,35 +39,20 @@ lemma (in propNoL) propNo_lt_not_ge_E [elim]:
   assumes lt: "p1 \<prec> p2"
   and not_gt: "\<lbrakk> p1 \<noteq> p2; \<not>(p2 \<prec> p1) \<rbrakk>  \<Longrightarrow> P"
   shows P
-using lt
-proof (intro not_gt notI)
-  assume "p2 \<prec> p1" also note lt
-  finally show False by auto
-qed auto
+  by (metis lt not_gt propNo_irreflexive propNo_trans_lt_lt)
 
 lemma (in propNoL) propNo_trans_lt_le [trans]:
   "p1 \<prec> p2 \<Longrightarrow> p2 \<preceq> p3 \<Longrightarrow> p1 \<prec> p3"
-  by (elim propNo_leE, rule propNo_trans_lt_lt, simp_all)
+  by (metis le_lt_eq propNo_trans_lt_lt)
 
 lemma (in propNoL) propNo_trans_le_lt [trans]:
   "p1 \<preceq> p2 \<Longrightarrow> p2 \<prec> p3 \<Longrightarrow> p1 \<prec> p3"
-  by (elim propNo_leE, rule propNo_trans_lt_lt, simp_all)
+  by (metis le_lt_eq propNo_trans_lt_lt)
 
 lemma (in propNoL) propNo_trans_le_le [trans]:
   assumes p12: "p1 \<preceq> p2" and p23: "p2 \<preceq> p3"
   shows "p1 \<preceq> p3"
-proof (cases "p1 = p3")
-  case True thus ?thesis by simp
-next
-  case False
-  with p12 p23
-  show "p1 \<preceq> p3"
-  proof (elim propNo_leE)
-    assume "p1 \<prec> p2"
-    also assume "p2 \<prec> p3"
-    finally show ?thesis by simp
-  qed auto
-qed
+  by (metis le_lt_eq p12 p23 propNo_trans_lt_le)
 
 locale quorateL = 
   fixes quorate_proposer :: "'acceptor set \<Rightarrow> bool"
@@ -116,58 +95,24 @@ locale paxosL = propNoL + quorateL +
     "\<And> a p0 p1. \<lbrakk> promised a p0 None; accepted a p1 \<rbrakk> \<Longrightarrow> p0 \<preceq> p1"
 
 lemma (in paxosL) promised_some_none:
-  assumes premSome: "promised a p0 (Some p1)" and premNone: "promised a p0 None"
+  assumes "promised a p0 (Some p1)" "promised a p0 None"
   shows P
 proof -
-  from premSome promised_Some_accepted
-  have acc: "accepted a p1" and p10: "p1 \<prec> p0" by auto
-  from premNone acc promised_None
-  have p01: "p0 \<preceq> p1" by auto
-  also note p10
-  finally show P by auto
+  have "promised a p0 (Some p1) \<longrightarrow> \<not> promised a p0 None"
+    by (metis promised_None promised_Some_accepted propNo_leE propNo_lt_not_ge_E)
+  with assms show P by simp
 qed
 
 lemma (in paxosL) promised_fun:
-  assumes mp1: "promised a p0 mp1" and mp2: "promised a p0 mp2"
+  assumes "promised a p0 mp1" "promised a p0 mp2"
   shows "mp1 = mp2"
-proof (cases mp1)
-  case None
-  note None1 = this
-  thus ?thesis
-  proof (cases mp2)
-    case (Some p2) show ?thesis
-    proof (rule promised_some_none)
-      from mp2 Some show "promised a p0 (Some p2)" by simp
-      from mp1 None1 show "promised a p0 None" by simp
-    qed 
-  qed simp
-next
-  case (Some p1) note Some1 = this
-  show ?thesis
-  proof (cases mp2)
-    case None show ?thesis
-    proof (rule promised_some_none)
-      from mp1 Some show "promised a p0 (Some p1)" by simp
-      from mp2 None show "promised a p0 None" by simp
-    qed
-  next
-    case (Some p2) note Some2 = this
-    from mp1 mp2 Some1 Some2 promised_Some_accepted promised_Some
-    have acc1: "accepted a p1" and p10: "p1 \<prec> p0"
-     and acc2: "accepted a p2" and p20: "p2 \<prec> p0"
-      by auto
-    from mp1 promised_Some Some1 acc2 p20 have p12: "p2 \<preceq> p1" by auto
-    from mp2 promised_Some Some2 acc1 p10 have p21: "p1 \<preceq> p2" by auto
-    from p12 p21
-    have "p1 = p2"
-    proof (elim propNo_leE)
-      assume "p1 \<prec> p2"
-      also assume "p2 \<prec> p1"
-      finally show ?thesis by auto
-    qed simp_all
-    with Some1 Some2 show ?thesis by simp
-  qed
-qed
+  apply (cases mp1)
+  apply (cases mp2)
+  apply (simp)
+  apply (metis assms promised_some_none)
+  apply (cases mp2)
+  apply (metis assms promised_some_none)
+  by (metis assms promised_Some promised_Some_accepted propNo_lt_not_ge_E)
 
 lemma (in paxosL)
   assumes "quorate_proposer S"
@@ -192,11 +137,7 @@ proof -
       proof (elim disjE)
         assume hyp1: "?P1 S'"
         show ?thesis
-        proof (intro disjI1 ballI allI impI)
-          fix a1 mp assume "a1 \<in> insert a S'" and p: "promised a1 p mp"
-          with False have "a1 \<in> S'" by auto
-          from hyp1 this p show "mp = None" by auto
-        qed
+          by (intro disjI1 ballI allI impI, metis False hyp1 insert_iff)
       next
         assume hyp2: "?P2 S'"
         then obtain a1 p1 where a1S: "a1 \<in> S'" and p: "promised a1 p (Some p1)"
@@ -208,13 +149,8 @@ proof -
           from p show "promised a1 p (Some p1)" .
           from a1S show "a1 \<in> insert a S'" by simp
           fix a3 p3
-          assume a3S: "a3 \<in> insert a S'"
-            and p3: "promised a3 p (Some p3)"
-          show "p3 \<preceq> p1"
-          proof (intro p1_max)
-            from p3 show "promised a3 p (Some p3)" .
-            from a3S False p3 show "a3 \<in> S'" by auto
-          qed
+          assume "a3 \<in> insert a S'" and "promised a3 p (Some p3)"
+          thus "p3 \<preceq> p1" by (metis False insert_iff p1_max)
         qed
       qed
     next
@@ -231,20 +167,8 @@ proof -
           proof (intro disjI1 ballI allI impI)
             fix a1 mp'
             assume "a1 \<in> insert a S'" and p: "promised a1 p mp'"
-            hence "a1 = a \<or> a1 \<in> S'" by simp
             thus "mp' = None"
-            proof (elim disjE)
-              assume eq: "a1 = a"
-              show "mp' = None"
-              proof (intro promised_fun)
-                from mp None show "promised a p None" by simp
-                from eq p show "promised a p mp'" by simp
-              qed
-            next
-              assume mem: "a1 \<in> S'"
-              from hyp1 mem p
-              show "mp' = None" by auto
-            qed
+              by (metis None hyp1 insert_iff local.mp promised_fun)
           qed
         next
           assume hyp2: "?P2 S'"
@@ -256,17 +180,7 @@ proof -
             from p show "promised a1 p (Some p1)" .
             from a1S show "a1 \<in> insert a S'" by simp
             fix a3 p3 assume "a3 \<in> insert a S'" and p: "promised a3 p (Some p3)"
-            hence "a3 = a \<or> a3 \<in> S'" by simp
-            thus "p3 \<preceq> p1"
-            proof (elim disjE)
-              assume "a3 = a"
-              with p have p: "promised a p (Some p3)" by simp
-              have "Some p3 = mp" by (intro promised_fun [OF p mp])
-              with None show ?thesis by simp
-            next
-              assume a3: "a3 \<in> S'"
-              with p show ?thesis by (intro p1_max, auto)
-            qed
+            thus "p3 \<preceq> p1" by (metis None insert_iff local.mp p1_max promised_some_none)
           qed
         qed
       next
@@ -284,67 +198,36 @@ proof -
             fix a3 p3
             assume "a3 \<in> insert a S'" and p: "promised a3 p (Some p3)"
             with none_proposed have a3: "a3 = a" by auto
-            have "Some p0 = Some p3"
-            proof (intro promised_fun)
-              from p show "promised a3 p (Some p3)" .
-              from a3 Some mp show "promised a3 p (Some p0)" by simp
-            qed
+            have "Some p0 = Some p3" by (metis Some a3 local.mp p promised_fun)
             thus "p3 \<preceq> p0" by simp
           qed
         next
           assume "?P2 S'"
           then obtain a1 p1 where a1S: "a1 \<in> S'" and p: "promised a1 p (Some p1)"
             and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S'; promised a3 p (Some p3) \<rbrakk> \<Longrightarrow> p3 \<preceq> p1" by auto
-          show ?thesis
-          proof (rule propNo_cases)
-            assume p1p: "p1 = p0"
-            show ?thesis
-            proof (intro bexI exI conjI ballI allI impI)
-              from p show "promised a1 p (Some p1)" .
-              from a1S show "a1 \<in> insert a S'" by simp
-              fix a3 p3
-              assume "a3 \<in> insert a S'"
-                and p3: "promised a3 p (Some p3)"
-              hence "a3 = a \<or> a3 \<in> S'" by simp
-              thus "p3 \<preceq> p1"
-              proof (elim disjE)
-                assume a3: "a3 \<in> S'"
-                show ?thesis by (intro p1_max [OF a3] p3)
-              next
-                assume a3: "a3 = a"
-                have "Some p0 = Some p3"
-                proof (intro promised_fun)
-                  from p3 show "promised a3 p (Some p3)" .
-                  from a3 Some mp show "promised a3 p (Some p0)" by simp
-                qed
-                with p1p show ?thesis by simp
-              qed
-            qed
-          next
-            assume pp1: "p0 \<prec> p1"
-            show ?thesis
-            proof (intro bexI exI conjI ballI allI impI)
+          have le: "p0 \<preceq> p1 \<Longrightarrow> ?thesis"
+          proof (intro bexI exI conjI ballI allI impI)
+            assume p10: "p0 \<preceq> p1"
+            hence p10_cases: "p0 \<prec> p1 \<or> p0 = p1" by simp
             from p show "promised a1 p (Some p1)" .
             from a1S show "a1 \<in> insert a S'" by simp
-              fix a3 p3
-              assume "a3 \<in> insert a S'"
-                and p3: "promised a3 p (Some p3)"
-              hence "a3 = a \<or> a3 \<in> S'" by simp
-              thus "p3 \<preceq> p1"
-              proof (elim disjE)
-                assume a3: "a3 \<in> S'"
-                show ?thesis by (intro p1_max [OF a3] p3)
-              next
-                assume a3: "a3 = a"
-                have "Some p0 = Some p3"
-                proof (intro promised_fun)
-                  from p3 show "promised a3 p (Some p3)" .
-                  from a3 Some mp show "promised a3 p (Some p0)" by simp
-                qed
-                hence "p0 = p3" by simp
-                with pp1 show ?thesis by simp
-              qed
-            qed
+            fix a3 p3
+            assume "a3 \<in> insert a S'"
+              and p3: "promised a3 p (Some p3)"
+            hence "a3 = a \<or> a3 \<in> S'" by simp
+            from this p10_cases show "p3 \<preceq> p1"
+            apply (elim disjE)
+            apply (metis Some p10 local.mp option.sel p3 promised_fun)
+            apply (metis Some le_lt_eq local.mp option.sel p3 promised_fun)
+            apply (metis p1_max p3)
+              by (metis p1_max p3)
+          qed
+
+          show ?thesis
+          proof (rule propNo_cases)
+            assume "p1 = p0" with le show ?thesis by simp
+          next
+            assume "p0 \<prec> p1" with le show ?thesis by simp
           next
             assume p1p: "p1 \<prec> p0"
             show ?thesis
@@ -356,19 +239,9 @@ proof -
                 and p3: "promised a3 p (Some p3)"
               hence "a3 = a \<or> a3 \<in> S'" by simp
               thus "p3 \<preceq> p0"
-              proof (elim disjE)
-                assume a3: "a3 = a"
-                have "Some p3 = Some p0"
-                proof (intro promised_fun [OF p3])
-                  from a3 mp Some show "promised a3 p (Some p0)" by simp
-                qed
-                thus ?thesis by simp
-              next
-                assume a3: "a3 \<in> S'"
-                with p3 have "p3 \<preceq> p1" by (intro p1_max)
-                also note p1p
-                finally show ?thesis by simp
-              qed
+              by (elim disjE,
+                  metis Some le_lt_eq local.mp option.sel p3 promised_fun,
+                  metis le_lt_eq p1_max p1p p3 propNo_trans_le_le)
             qed
           qed
         qed
@@ -405,12 +278,7 @@ proof -
     proof (cases "ALL a1:S. promised a1 p0 None")
       case True
       show ?thesis
-      proof (intro disjI1 ballI allI impI notI)
-        fix a1 p1 assume a1S: "a1 \<in> S" and p10: "p1 \<prec> p0" and acc1: "accepted a1 p1"
-        from a1S promised_None True acc1 have "p0 \<preceq> p1" by auto
-        also note p10
-        finally show False by auto
-      qed
+        by (metis True promised_None propNo_irreflexive propNo_trans_lt_le)
     next
       case False
       then obtain a2 where a2S: "a2 \<in> S" and not_None: "\<not> promised a2 p0 None" by auto
@@ -423,9 +291,7 @@ proof -
         where a1S: "a1 \<in> S"
         and p1: "promised a1 p0 (Some p1)"
         and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S; promised a3 p0 (Some p3) \<rbrakk> \<Longrightarrow> p3 \<preceq> p1"
-      proof (elim disjE)
-        assume "\<forall>a1\<in>S. \<forall>mp. promised a1 p0 mp \<longrightarrow> mp = None" with a2S p2 show ?thesis by auto
-      qed auto
+          by (metis a2S option.distinct(2) p2)
   
       from p1 promised_Some_accepted have lt10: "p1 \<prec> p0" by auto
   
@@ -433,19 +299,10 @@ proof -
       proof (intro exI conjI disjI2 bexI ballI allI impI)
         from p1 promised_Some_accepted show acc1: "accepted a1 p1" by simp
         from a1S show "a1 \<in> S" .
+
         from S_value [OF a1S p1]
         show "value_proposed p0 = value_accepted a1 p1"
-        proof (elim disjE bexE exE conjE)
-          fix a3 p3 assume "a3 \<in> S" and "promised a3 p0 (Some p3)"
-          with p1_max have "p3 \<preceq> p1" by auto
-          also assume "p1 \<prec> p3"
-          finally show ?thesis by auto
-        next
-          assume "value_proposed p0 = value_promised a1 p0"
-          also from promised_Some [OF p1 acc1 lt10]
-          have "... = value_accepted a1 p1" by simp
-          finally show "value_proposed p0 = ..." .
-        qed
+          by (metis acc1 lt10 p1 p1_max promised_Some propNo_leE propNo_lt_not_ge_E)
 
         from lt10 show "p1 \<prec> p0" .
   
@@ -453,17 +310,12 @@ proof -
         hence acc3: "accepted a3 p3" and lt30: "p3 \<prec> p0" by auto
   
         from a3S S_promised obtain mp3 where mp3: "promised a3 p0 mp3" by auto
+        
         show "p3 \<preceq> p1"
         proof (cases mp3)
-          case None
-          with mp3 have "promised a3 p0 None" by simp
-          with promised_None acc3 lt30 show ?thesis by auto
+          case None thus ?thesis by (metis acc3 lt30 mp3 promised_None propNo_leE propNo_lt_not_ge_E)
         next
-          case (Some p3')
-          from mp3 Some have "promised a3 p0 (Some p3')" by simp
-          from promised_Some [OF this] acc3 lt30 have "p3 \<preceq> p3'" by auto
-          also from p1_max a3S mp3 Some have "p3' \<preceq> p1" by auto
-          finally show ?thesis .
+          case Some thus ?thesis by (metis acc3 lt30 a3S le_lt_eq mp3 p1_max promised_Some propNo_trans_lt_le)
         qed
       qed
     qed
@@ -507,21 +359,12 @@ proof -
         show "value_proposed p0 = value_proposed p1"
         proof (elim disjE)
           assume "?P1"
-          hence 1: "\<And>a2 p2 P. \<lbrakk> a2 \<in> SP; p2 \<prec> p1; accepted a2 p2 \<rbrakk> \<Longrightarrow> P" by auto
-          show ?thesis by (rule 1 [OF aSP lt01 SC_accepts [OF aSC]])
+          thus ?thesis
+            by (metis SC_accepts aSC aSP lt01)
         next
           assume "?P2"
-          then obtain a2 p2 where a2S: "a2 \<in> SP"
-            and a2_accepted: "accepted a2 p2"
-            and v_eq: "value_proposed p1 = value_accepted a2 p2"
-            and a2_max: "\<And>a3 p3. \<lbrakk> a3 \<in> SP; accepted a3 p3; p3 \<prec> p1 \<rbrakk> \<Longrightarrow> p3 \<preceq> p2"
-            and lt21: "p2 \<prec> p1"
-            by auto
-          
-          from aSP aSC
-          have "value_proposed p0 = value_proposed p2"
-            by (intro hyp a2_max lt01 SC_accepts accepts_proposed [OF a2_accepted] lt21)
-          with v_eq accepts_value [OF a2_accepted] show "value_proposed p0 = value_proposed p1" by simp
+          thus ?thesis
+            by (metis SC_accepts aSC aSP accepts_proposed accepts_value hyp lt01)
         qed
       qed
     qed simp
