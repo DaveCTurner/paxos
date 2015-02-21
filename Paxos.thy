@@ -66,7 +66,8 @@ locale quorumL =
 
 locale paxosL = propNoL + quorumL +
 
-  fixes promised :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> 'pid option \<Rightarrow> bool"
+  fixes promised_free :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes promised_prev :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> 'pid \<Rightarrow> bool"
   fixes proposed :: "'pid \<Rightarrow> bool"
   fixes accepted :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> bool"
   fixes chosen :: "'pid \<Rightarrow> bool"
@@ -74,51 +75,51 @@ locale paxosL = propNoL + quorumL +
   fixes value_proposed :: "'pid \<Rightarrow> 'value"
   fixes value_accepted :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> 'value"
 
-  assumes chosen_quorum:
-    "\<And> p . chosen p \<Longrightarrow> EX S. quorum_learner S \<and> (ALL a:S. accepted a p)"
   assumes proposed_quorum:
     "\<And> p . proposed p \<Longrightarrow> EX S. quorum_proposer S
-      \<and> (ALL a:S. EX mp. promised a p mp)
-      \<and> (ALL a1:S. ALL p1. promised a1 p (Some p1)
+      \<and> (ALL a:S. promised_free a p \<or> (EX p1. promised_prev a p p1))
+      \<and> (ALL a1:S. ALL p1. promised_prev a1 p p1
           \<longrightarrow> value_proposed p = value_promised a1 p
-          \<or> (EX a2:S. EX p2. promised a2 p (Some p2) \<and> p1 \<prec> p2))"
+          \<or> (EX a2:S. EX p2. promised_prev a2 p p2 \<and> p1 \<prec> p2))"
+
+  assumes promised_free:
+    "\<And> a p0 p1. \<lbrakk> promised_free a p0; accepted a p1 \<rbrakk> \<Longrightarrow> p0 \<preceq> p1"
+
+  assumes promised_prev_accepted:
+    "\<And> a p0 p1. promised_prev a p0 p1 \<Longrightarrow> accepted a p1"
+  assumes promised_prev_prev:
+    "\<And> a p0 p1. promised_prev a p0 p1 \<Longrightarrow> p1 \<prec> p0"
+  assumes promised_prev_max:
+    "\<And> a p0 p1 p2. \<lbrakk> promised_prev a p0 p1; accepted a p2; p2 \<prec> p0 \<rbrakk>
+      \<Longrightarrow> ((p1 = p2 \<and> value_accepted a p1 = value_promised a p0) \<or> p2 \<prec> p1)"
+
   assumes accepts_proposed:
     "\<And> p a. accepted a p \<Longrightarrow> proposed p"
   assumes accepts_value:
     "\<And> p a. accepted a p \<Longrightarrow> value_accepted a p = value_proposed p"
-  assumes promised_Some_accepted:
-    "\<And> a p0 p1. promised a p0 (Some p1) \<Longrightarrow> accepted a p1 \<and> p1 \<prec> p0"
-  assumes promised_Some:
-    "\<And> a p0 p1 p2. \<lbrakk> promised a p0 (Some p1); accepted a p2; p2 \<prec> p0 \<rbrakk>
-      \<Longrightarrow> ((p1 = p2 \<and> value_accepted a p1 = value_promised a p0) \<or> p2 \<prec> p1)"
-  assumes promised_None:
-    "\<And> a p0 p1. \<lbrakk> promised a p0 None; accepted a p1 \<rbrakk> \<Longrightarrow> p0 \<preceq> p1"
+
+  assumes chosen_quorum:
+    "\<And> p . chosen p \<Longrightarrow> EX S. quorum_learner S \<and> (ALL a:S. accepted a p)"
 
 lemma (in paxosL) promised_some_none:
-  assumes "promised a p0 (Some p1)" "promised a p0 None"
+  assumes "promised_prev a p0 p1" "promised_free a p0"
   shows P
 proof -
-  have "promised a p0 (Some p1) \<longrightarrow> \<not> promised a p0 None"
-    by (metis promised_None promised_Some_accepted propNo_leE propNo_lt_not_ge_E)
+  have "promised_prev a p0 p1 \<longrightarrow> \<not> promised_free a p0"
+    by (metis promised_free promised_prev_accepted promised_prev_prev propNo_leE propNo_lt_not_ge_E)
   with assms show P by simp
 qed
 
-lemma (in paxosL) promised_fun:
-  assumes "promised a p0 mp1" "promised a p0 mp2"
-  shows "mp1 = mp2"
-  apply (cases mp1)
-  apply (cases mp2)
-  apply (simp)
-  apply (metis assms promised_some_none)
-  apply (cases mp2)
-  apply (metis assms promised_some_none)
-  by (metis assms promised_Some promised_Some_accepted propNo_lt_not_ge_E)
+lemma (in paxosL) promised_prev_fun:
+  assumes "promised_prev a p0 p1" "promised_prev a p0 p2"
+  shows "p1 = p2"
+  by (metis assms promised_prev_accepted promised_prev_max promised_prev_prev propNo_lt_not_ge_E)
 
 lemma (in paxosL)
   assumes "quorum_proposer S"
-  shows paxos_max_proposer: "(ALL a1:S. ALL mp. promised a1 p mp \<longrightarrow> mp = None)
- \<or> (EX a1:S. EX p1. promised a1 p (Some p1)
-         \<and> (ALL a3:S. ALL p3. promised a3 p (Some p3) \<longrightarrow> p3 \<preceq> p1))"
+  shows paxos_max_proposer: "(ALL a0:S. ALL p1. \<not> promised_prev a0 p p1)
+ \<or> (EX a1:S. EX p1. promised_prev a1 p p1
+         \<and> (ALL a3:S. ALL p3. promised_prev a3 p p3 \<longrightarrow> p3 \<preceq> p1))"
   (is "?P1 S \<or> ?P2 S")
 proof -
   from assms quorum_finite
@@ -130,7 +131,7 @@ proof -
     case (insert a S')
 
     show ?case
-    proof (cases "EX mp. promised a p mp")
+    proof (cases "EX p0. promised_prev a p p0")
       case False
       from insert.hyps
       show ?thesis
@@ -140,114 +141,83 @@ proof -
           by (intro disjI1 ballI allI impI, metis False hyp1 insert_iff)
       next
         assume hyp2: "?P2 S'"
-        then obtain a1 p1 where a1S: "a1 \<in> S'" and p: "promised a1 p (Some p1)"
-          and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S'; promised a3 p (Some p3) \<rbrakk> \<Longrightarrow> p3 \<preceq> p1"
+        then obtain a1 p1 where a1S: "a1 \<in> S'" and p: "promised_prev a1 p p1"
+          and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S'; promised_prev a3 p p3 \<rbrakk> \<Longrightarrow> p3 \<preceq> p1"
           by auto
 
         show ?thesis
         proof (intro disjI2 bexI exI conjI ballI allI impI)
-          from p show "promised a1 p (Some p1)" .
+          from p show "promised_prev a1 p p1" .
           from a1S show "a1 \<in> insert a S'" by simp
           fix a3 p3
-          assume "a3 \<in> insert a S'" and "promised a3 p (Some p3)"
+          assume "a3 \<in> insert a S'" and "promised_prev a3 p p3"
           thus "p3 \<preceq> p1" by (metis False insert_iff p1_max)
         qed
       qed
     next
       case True
-      then obtain mp where mp: "promised a p mp" by auto
-      show ?thesis
-      proof (cases mp)
-        case None
-        from insert.hyps
+      then obtain p0 where p0: "promised_prev a p p0" by auto
+
+      from insert.hyps
+      have "?P2 (insert a S')"
+      proof (elim disjE)
+        assume "?P1 S'"
+        hence none_proposed: "\<And> a1 p1 P. \<lbrakk> a1 \<in> S'; promised_prev a1 p p1 \<rbrakk> \<Longrightarrow> P" by simp
         show ?thesis
-        proof (elim disjE)
-          assume hyp1: "?P1 S'"
-          show ?thesis
-          proof (intro disjI1 ballI allI impI)
-            fix a1 mp'
-            assume "a1 \<in> insert a S'" and p: "promised a1 p mp'"
-            thus "mp' = None"
-              by (metis None hyp1 insert_iff local.mp promised_fun)
-          qed
-        next
-          assume hyp2: "?P2 S'"
-          then obtain a1 p1 where a1S: "a1 \<in> S'" and p: "promised a1 p (Some p1)"
-            and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S'; promised a3 p (Some p3) \<rbrakk> \<Longrightarrow> p3 \<preceq> p1"
-            by auto
-          show ?thesis
-          proof (intro disjI2 bexI exI conjI impI ballI allI)
-            from p show "promised a1 p (Some p1)" .
-            from a1S show "a1 \<in> insert a S'" by simp
-            fix a3 p3 assume "a3 \<in> insert a S'" and p: "promised a3 p (Some p3)"
-            thus "p3 \<preceq> p1" by (metis None insert_iff local.mp p1_max promised_some_none)
-          qed
+        proof (intro bexI exI conjI impI ballI allI)
+          show "a \<in> insert a S'" by simp
+          from p0 show "promised_prev a p p0" .
+          fix a3 p3
+          assume "a3 \<in> insert a S'" and p: "promised_prev a3 p p3"
+          thus "p3 \<preceq> p0"
+            by (metis insert_iff le_lt_eq none_proposed p0 promised_prev_fun)
         qed
       next
-        case (Some p0)
-
-        from insert.hyps
-        have "?P2 (insert a S')"
-        proof (elim disjE)
-          assume "?P1 S'"
-          hence none_proposed: "\<And> a1 mp. \<lbrakk> a1 \<in> S'; promised a1 p mp \<rbrakk> \<Longrightarrow> mp = None" by simp
-          show ?thesis
-          proof (intro bexI exI conjI impI ballI allI)
-            show "a \<in> insert a S'" by simp
-            from mp Some show "promised a p (Some p0)" by simp
-            fix a3 p3
-            assume "a3 \<in> insert a S'" and p: "promised a3 p (Some p3)"
-            with none_proposed have a3: "a3 = a" by auto
-            have "Some p0 = Some p3" by (metis Some a3 local.mp p promised_fun)
-            thus "p3 \<preceq> p0" by simp
-          qed
-        next
-          assume "?P2 S'"
-          then obtain a1 p1 where a1S: "a1 \<in> S'" and p: "promised a1 p (Some p1)"
-            and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S'; promised a3 p (Some p3) \<rbrakk> \<Longrightarrow> p3 \<preceq> p1" by auto
-          have le: "p0 \<preceq> p1 \<Longrightarrow> ?thesis"
-          proof (intro bexI exI conjI ballI allI impI)
-            assume p10: "p0 \<preceq> p1"
-            hence p10_cases: "p0 \<prec> p1 \<or> p0 = p1" by simp
-            from p show "promised a1 p (Some p1)" .
-            from a1S show "a1 \<in> insert a S'" by simp
-            fix a3 p3
-            assume "a3 \<in> insert a S'"
-              and p3: "promised a3 p (Some p3)"
-            hence "a3 = a \<or> a3 \<in> S'" by simp
-            from this p10_cases show "p3 \<preceq> p1"
-            apply (elim disjE)
-            apply (metis Some p10 local.mp option.sel p3 promised_fun)
-            apply (metis Some le_lt_eq local.mp option.sel p3 promised_fun)
-            apply (metis p1_max p3)
-              by (metis p1_max p3)
-          qed
-
-          show ?thesis
-          proof (rule propNo_cases)
-            assume "p1 = p0" with le show ?thesis by simp
-          next
-            assume "p0 \<prec> p1" with le show ?thesis by simp
-          next
-            assume p1p: "p1 \<prec> p0"
-            show ?thesis
-            proof (intro bexI exI conjI ballI allI impI)
-              from mp Some show "promised a p (Some p0)" by simp
-              show "a \<in> insert a S'" by simp
-              fix a3 p3
-              assume "a3 \<in> insert a S'"
-                and p3: "promised a3 p (Some p3)"
-              hence "a3 = a \<or> a3 \<in> S'" by simp
-              thus "p3 \<preceq> p0"
-              by (elim disjE,
-                  metis Some le_lt_eq local.mp option.sel p3 promised_fun,
-                  metis le_lt_eq p1_max p1p p3 propNo_trans_le_le)
-            qed
-          qed
+        assume "?P2 S'"
+        then obtain a1 p1 where a1S: "a1 \<in> S'" and p: "promised_prev a1 p p1"
+          and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S'; promised_prev a3 p p3 \<rbrakk> \<Longrightarrow> p3 \<preceq> p1" by auto
+        have le: "p0 \<preceq> p1 \<Longrightarrow> ?thesis"
+        proof (intro bexI exI conjI ballI allI impI)
+          assume p10: "p0 \<preceq> p1"
+          hence p10_cases: "p0 \<prec> p1 \<or> p0 = p1" by simp
+          from p show "promised_prev a1 p p1" .
+          from a1S show "a1 \<in> insert a S'" by simp
+          fix a3 p3
+          assume "a3 \<in> insert a S'"
+            and p3: "promised_prev a3 p p3"
+          hence "a3 = a \<or> a3 \<in> S'" by simp
+          from this p10_cases show "p3 \<preceq> p1"
+          apply (elim disjE)
+          apply (metis p0 p10 p3 promised_prev_fun)
+          apply (metis le_lt_eq p0 p3 promised_prev_fun)
+          apply (metis p1_max p3)
+            by (metis p1_max p3)
         qed
 
-        thus ?thesis by simp
+        show ?thesis
+        proof (rule propNo_cases)
+          assume "p1 = p0" with le show ?thesis by simp
+        next
+          assume "p0 \<prec> p1" with le show ?thesis by simp
+        next
+          assume p1p: "p1 \<prec> p0"
+          show ?thesis
+          proof (intro bexI exI conjI ballI allI impI)
+            from p0 show "promised_prev a p p0" .
+            show "a \<in> insert a S'" by simp
+            fix a3 p3
+            assume "a3 \<in> insert a S'"
+              and p3: "promised_prev a3 p p3"
+            hence "a3 = a \<or> a3 \<in> S'" by simp
+            thus "p3 \<preceq> p0"
+              apply (elim disjE)
+              apply (metis le_lt_eq p0 p3 promised_prev_fun)
+              by (metis le_lt_eq p1_max p1p p3 propNo_trans_le_le)
+          qed
+        qed
       qed
+
+      thus ?thesis by simp
     qed
   qed
 qed
@@ -263,8 +233,8 @@ lemma (in paxosL) p2c:
 proof -
   from proposed_quorum [OF proposed_p0]
   obtain S where quorum_S: "quorum_proposer S"
-    and S_promised: "\<And> a1. a1 \<in> S \<Longrightarrow> \<exists>mp1. promised a1 p0 mp1"
-    and S_value: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised a1 p0 (Some p1) \<rbrakk> \<Longrightarrow> value_proposed p0 = value_promised a1 p0 \<or> (\<exists>a2\<in>S. \<exists>p2. promised a2 p0 (Some p2) \<and> p1 \<prec> p2)"
+    and S_promised: "\<And> a1. a1 \<in> S \<Longrightarrow> promised_free a1 p0 \<or> (\<exists>p1. promised_prev a1 p0 p1)"
+    and S_value: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised_prev a1 p0 p1 \<rbrakk> \<Longrightarrow> value_proposed p0 = value_promised a1 p0 \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p0 p2 \<and> p1 \<prec> p2)"
     by auto
   show thesis
   proof (intro that)
@@ -275,48 +245,42 @@ proof -
             \<and> p1 \<prec> p0
             \<and> (ALL a2 : S. ALL p2. (accepted a2 p2 \<and> p2 \<prec> p0) \<longrightarrow> p2 \<preceq> p1))"
     (is "?ALLFRESH \<or> ?EXISTSMAX")
-    proof (cases "ALL a1:S. promised a1 p0 None")
+    proof (cases "ALL a1:S. promised_free a1 p0")
       case True
       show ?thesis
-        by (metis True promised_None propNo_irreflexive propNo_trans_lt_le)
+        by (metis True promised_free propNo_irreflexive propNo_trans_lt_le)
     next
       case False
-      then obtain a2 where a2S: "a2 \<in> S" and not_None: "\<not> promised a2 p0 None" by auto
-      from S_promised a2S obtain mp2 where "promised a2 p0 mp2" by auto
-      with not_None obtain p2 where p2: "promised a2 p0 (Some p2)"
-        by (cases mp2, auto)
+      then obtain a2 where a2S: "a2 \<in> S" and not_None: "\<not> promised_free a2 p0" by auto
+      from S_promised a2S not_None obtain p2 where p2: "promised_prev a2 p0 p2" by metis
 
       from paxos_max_proposer [OF quorum_S, where p = p0]
       obtain a1 p1
         where a1S: "a1 \<in> S"
-        and p1: "promised a1 p0 (Some p1)"
-        and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S; promised a3 p0 (Some p3) \<rbrakk> \<Longrightarrow> p3 \<preceq> p1"
-          by (metis a2S option.distinct(2) p2)
+        and p1: "promised_prev a1 p0 p1"
+        and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S; promised_prev a3 p0 p3 \<rbrakk> \<Longrightarrow> p3 \<preceq> p1"
+          by (metis a2S p2)
 
-      from p1 promised_Some_accepted have lt10: "p1 \<prec> p0" by auto
+      have lt10: "p1 \<prec> p0" by (metis p1 promised_prev_prev)
 
       show ?thesis
       proof (intro exI conjI disjI2 bexI ballI allI impI)
-        from p1 promised_Some_accepted show acc1: "accepted a1 p1" by simp
+        from p1 show acc1: "accepted a1 p1" by (metis promised_prev_accepted)
         from a1S show "a1 \<in> S" .
 
         from S_value [OF a1S p1]
         show "value_proposed p0 = value_accepted a1 p1"
-          by (metis acc1 lt10 p1 p1_max promised_Some propNo_leE propNo_lt_not_ge_E)
+          by (metis acc1 lt10 p1 p1_max promised_prev_max propNo_irreflexive propNo_trans_lt_le)
 
         from lt10 show "p1 \<prec> p0" .
 
-        fix a3 p3 assume a3S: "a3 \<in> S" and "accepted a3 p3 \<and> p3 \<prec> p0"
-        hence acc3: "accepted a3 p3" and lt30: "p3 \<prec> p0" by auto
+        fix a3 p3 assume a3S: "a3 \<in> S" and p3: "accepted a3 p3 \<and> p3 \<prec> p0"
 
-        from a3S S_promised obtain mp3 where mp3: "promised a3 p0 mp3" by auto
+        from a3S S_promised obtain p4 where p4: "promised_prev a3 p0 p4"
+          by (metis p3 promised_free propNo_leE propNo_lt_not_ge_E)
 
         show "p3 \<preceq> p1"
-        proof (cases mp3)
-          case None thus ?thesis by (metis acc3 lt30 mp3 promised_None propNo_leE propNo_lt_not_ge_E)
-        next
-          case Some thus ?thesis by (metis acc3 lt30 a3S le_lt_eq mp3 p1_max promised_Some propNo_trans_lt_le)
-        qed
+          by (metis a3S le_lt_eq p1_max p3 p4 promised_prev_max propNo_trans_le_le)
       qed
     qed
   qed
@@ -392,12 +356,13 @@ theorem (in paxosL)
 lemma paxos_empty:
   assumes propNoL: "propNoL lt le"
   assumes quorumL: "quorumL quorum_proposer quorum_learner"
-  assumes no_promise: "\<And> a p mp. \<not>promised a p mp"
+  assumes no_promise: "\<And> a p p1. \<not>promised_prev a p p1"
+  assumes no_promise: "\<And> a p. \<not>promised_free a p"
   assumes no_proposed: "\<And> p. \<not>proposed p"
   assumes no_accepted: "\<And> a p. \<not>accepted a p"
   assumes no_chosen: "\<And> p. \<not>chosen p"
 
-  shows "paxosL lt le quorum_proposer quorum_learner promised proposed accepted chosen value_promised value_proposed value_accepted"
+  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
 using assms by (auto simp add: paxosL_def paxosL_axioms_def)
 
 lemma (in paxosL) paxos_propNo [simp]: "propNoL lt le"
@@ -408,29 +373,28 @@ using quorum_finite quorum_inter quorum_exists by (auto simp add: quorumL_def)
 
 lemma (in paxosL) paxos_add_proposal_free:
   assumes quorum_S: "quorum_proposer S"
-  assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> promised a p0 None"
-  shows "paxosL lt le quorum_proposer quorum_learner promised (%p. p = p0 \<or> proposed p) accepted chosen value_promised value_proposed value_accepted"
+  assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> promised_free a p0"
+  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev (%p. p = p0 \<or> proposed p) accepted chosen value_promised value_proposed value_accepted"
 (* the proposer only needs to know about 'promised' messages to send a 'proposed' message *)
-using chosen_quorum accepts_proposed promised_Some_accepted promised_None promised_Some accepts_value
+using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
 
   from proposed_quorum
-  show "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> (\<exists>S. quorum_proposer S \<and> (\<forall>a\<in>S. \<exists>mp. promised a p mp) \<and> (\<forall>a1\<in>S. \<forall>p1. promised a1 p (Some p1) \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised a2 p (Some p2) \<and> p1 \<prec> p2)))"
+  show "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> (\<exists>S. quorum_proposer S \<and> (\<forall>a\<in>S. promised_free a p \<or> (\<exists> p1. promised_prev a p p1)) 
+    \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev a1 p p1 \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)))"
+    (is "\<forall> p. p = p0 \<or> proposed p \<longrightarrow> ?P p")
   proof (intro allI impI, elim disjE)
     fix p assume pp0: "p = p0"
-    show "\<exists>S. quorum_proposer S \<and> (\<forall>a\<in>S. \<exists>mp. promised a p mp) \<and> (\<forall>a1\<in>S. \<forall>p1. promised a1 p (Some p1) \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised a2 p (Some p2) \<and> p1 \<prec> p2))"
+    show "?P p"
     proof (intro exI [where x = S] conjI ballI allI impI)
       from quorum_S show "quorum_proposer S" .
       fix a1 assume a1S: "a1 \<in> S"
-      with promised_S pp0 show "EX mp. promised a1 p mp" by auto
+      with promised_S pp0 show "promised_free a1 p \<or> (\<exists>p1. promised_prev a1 p p1)" by auto
 
-      fix p1 assume p1: "promised a1 p (Some p1)"
-      have "Some p1 = None"
-      proof (intro promised_fun)
-        from p1 show "promised a1 p (Some p1)" .
-        from promised_S a1S pp0 show "promised a1 p None" by simp
-      qed
-      thus "value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised a2 p (Some p2) \<and> p1 \<prec> p2)" by simp
+      fix p1 assume p1: "promised_prev a1 p p1"
+      with promised_S [OF a1S] have False
+        by (metis pp0 promised_some_none)
+      thus "value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)" by simp
     qed
   qed simp
 qed simp_all
@@ -438,26 +402,29 @@ qed simp_all
 
 lemma (in paxosL) paxos_add_proposal_constrained:
   assumes quorum_S: "quorum_proposer S"
-  assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> EX mp. promised a p0 mp"
-  assumes promised_S_value: "\<And>a p1. a \<in> S \<Longrightarrow> promised a p0 (Some p1) \<Longrightarrow> value_proposed p0 = value_promised a p0 \<or> (\<exists>a2\<in>S. \<exists>p2. promised a2 p0 (Some p2) \<and> p1 \<prec> p2)"
-  shows "paxosL lt le quorum_proposer quorum_learner promised (%p. p = p0 \<or> proposed p) accepted chosen value_promised value_proposed value_accepted"
+  assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> promised_free a p0 \<or> (EX p1. promised_prev a p0 p1)"
+  assumes promised_S_value: "\<And>a p1. a \<in> S \<Longrightarrow> promised_prev a p0 p1 \<Longrightarrow> value_proposed p0 = value_promised a p0 \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p0 p2 \<and> p1 \<prec> p2)"
+  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev (%p. p = p0 \<or> proposed p) accepted chosen value_promised value_proposed value_accepted"
 (* the Proposer only needs to know about promised messages (and 'value') to send a 'proposed' message *)
-using chosen_quorum accepts_proposed promised_Some_accepted promised_None promised_Some accepts_value
+using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   from proposed_quorum
-  show "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> (\<exists>S. quorum_proposer S \<and> (\<forall>a\<in>S. \<exists>mp. promised a p mp) \<and> (\<forall>a1\<in>S. \<forall>p1. promised a1 p (Some p1) \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised a2 p (Some p2) \<and> p1 \<prec> p2)))"
+  show "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> (\<exists>S. quorum_proposer S 
+      \<and> (\<forall>a\<in>S. promised_free a p \<or> (\<exists>p1. promised_prev a p p1))
+      \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev a1 p p1 \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)))"
+      (is "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> ?P p")
   proof (intro allI impI, elim disjE)
     fix p assume pp0: "p = p0"
-    show "\<exists>S. quorum_proposer S \<and> (\<forall>a\<in>S. \<exists>mp. promised a p mp) \<and> (\<forall>a1\<in>S. \<forall>p1. promised a1 p (Some p1) \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised a2 p (Some p2) \<and> p1 \<prec> p2))"
+    show "?P p"
     proof (intro exI [where x = S] conjI ballI allI impI)
       from quorum_S show "quorum_proposer S" .
       fix a1 assume a1S: "a1 \<in> S"
-      with promised_S pp0 show "EX mp. promised a1 p mp" by simp
+      with promised_S pp0 show "promised_free a1 p \<or> (EX p1. promised_prev a1 p p1)" by simp
 
-      fix p1 assume p1: "promised a1 p (Some p1)"
-      with pp0 have "promised a1 p0 (Some p1)" by simp
+      fix p1 assume p1: "promised_prev a1 p p1"
+      with pp0 have "promised_prev a1 p0 p1" by simp
       from promised_S_value [OF a1S this]
-      show "value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised a2 p (Some p2) \<and> p1 \<prec> p2)" by (simp add: pp0)
+      show "value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)" by (simp add: pp0)
     qed
   qed simp
 qed simp_all
@@ -465,9 +432,9 @@ qed simp_all
 lemma (in paxosL) paxos_add_choice:
   assumes quorum_S: "quorum_learner S"
   assumes accepted_S: "\<And>a. a \<in> S \<Longrightarrow> accepted a p0"
-  shows "paxosL lt le quorum_proposer quorum_learner promised proposed accepted (%p. p = p0 \<or> chosen p) value_promised value_proposed value_accepted"
+  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed accepted (%p. p = p0 \<or> chosen p) value_promised value_proposed value_accepted"
 (* the Learner only needs to know about accepted messages to send a 'chosen' message. *)
-using accepts_proposed promised_Some_accepted promised_None promised_Some proposed_quorum accepts_value
+using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   show "\<forall>p. p = p0 \<or> chosen p \<longrightarrow> (\<exists>S. quorum_learner S \<and> (\<forall>a\<in>S. accepted a p))"
     by (metis chosen_quorum assms)
@@ -475,30 +442,36 @@ qed simp_all
 
 (* the Acceptor only needs to know what it has previously accepted and promised
 to send promised messages *)
-lemma (in paxosL) paxos_add_promise_None:
+lemma (in paxosL) paxos_add_promise_free:
   assumes not_accepted: "\<And>p. \<not>accepted a0 p"
-  shows   "paxosL lt le quorum_proposer quorum_learner (%a p mp. (a, p, mp) = (a0, p0, None) \<or> promised a p mp) proposed accepted chosen value_promised value_proposed value_accepted"
-using assms promised_Some promised_Some_accepted promised_None chosen_quorum accepts_proposed accepts_value
+  shows   "paxosL lt le quorum_proposer quorum_learner (%a p. (a, p) = (a0, p0) \<or> promised_free a p) promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
+using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
-  show "\<forall>p. proposed p \<longrightarrow> (\<exists>S. quorum_proposer S \<and> (\<forall>a\<in>S. \<exists>mp. (a, p, mp) = (a0, p0, None) \<or> promised a p mp) \<and> (\<forall>a1\<in>S. \<forall>p1. (a1, p, Some p1) = (a0, p0, None) \<or> promised a1 p (Some p1) \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. ((a2, p, Some p2) = (a0, p0, None) \<or> promised a2 p (Some p2)) \<and> p1 \<prec> p2)))"
+  from assms promised_free
+  show "\<forall>a p0a p1. (a, p0a) = (a0, p0) \<or> promised_free a p0a \<longrightarrow> accepted a p1 \<longrightarrow> p0a \<preceq> p1" by simp
+
+  show "\<forall>p. proposed p \<longrightarrow> (\<exists>S. quorum_proposer S
+    \<and> (\<forall>a\<in>S. ((a, p) = (a0, p0) \<or> promised_free a p) \<or> (\<exists>p1. promised_prev a p p1))
+    \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev a1 p p1 \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)))"
+      (is "\<forall>p. proposed p \<longrightarrow> ?P p")
   proof (intro allI impI)
     fix p assume proposed: "proposed p"
     with proposed_quorum [OF this] obtain S where S_quorum: "quorum_proposer S"
-      and S_accepted: "\<And>a. a \<in> S \<Longrightarrow> EX mp. promised a p mp"
-      and S_consistent: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised a1 p (Some p1) \<rbrakk> \<Longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised a2 p (Some p2) \<and> p1 \<prec> p2)" by auto
+      and S_accepted: "\<And>a. a \<in> S \<Longrightarrow>  promised_free a p \<or> (\<exists>p1. promised_prev a p p1)"
+      and S_consistent: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised_prev a1 p p1 \<rbrakk> \<Longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)" by auto
 
     from S_quorum
-    show "(\<exists>S. quorum_proposer S \<and> (\<forall>a\<in>S. \<exists>mp. (a, p, mp) = (a0, p0, None) \<or> promised a p mp) \<and> (\<forall>a1\<in>S. \<forall>p1. (a1, p, Some p1) = (a0, p0, None) \<or> promised a1 p (Some p1) \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. ((a2, p, Some p2) = (a0, p0, None) \<or> promised a2 p (Some p2)) \<and> p1 \<prec> p2)))"
+    show "?P p"
     proof (intro exI [where x = S] conjI ballI allI impI)
-      fix a1 p1
+      fix a1
       assume a1S: "a1 \<in> S"
       from S_accepted [OF this]
-      show "\<exists>mp. (a1, p, mp) = (a0, p0, None) \<or> promised a1 p mp" by auto
+      show "((a1, p) = (a0, p0) \<or> promised_free a1 p) \<or> (\<exists>p1. promised_prev a1 p p1)" by auto
 
-      assume "(a1, p, Some p1) = (a0, p0, None) \<or> promised a1 p (Some p1)"
-        hence promised: "promised a1 p (Some p1)" by simp
+      fix p1
+      assume promised: "promised_prev a1 p p1"
       from S_consistent [OF a1S promised]
-      show "value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. ((a2, p, Some p2) = (a0, p0, None) \<or> promised a2 p (Some p2)) \<and> p1 \<prec> p2)"
+      show "value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)"
         by auto
 
     qed simp
@@ -506,83 +479,93 @@ proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
 qed auto
 
 lemma (in paxosL) paxos_add_promise_Some:
-  assumes accepted: "accepted a0 p1"
-  and accepted_max: "\<And>p2. accepted a0 p2 \<Longrightarrow> p2 \<preceq> p1"
-  and promised_newer: "\<And>p mp. promised a0 p mp \<Longrightarrow> p \<prec> p0"
+  assumes accepted: "accepted a0 p'0"
+  and accepted_max: "\<And>p2. accepted a0 p2 \<Longrightarrow> p2 \<preceq> p'0"
+  and promised_free_newer: "\<And>p. promised_free a0 p \<Longrightarrow> p \<prec> p0"
+  and promised_prev_newer: "\<And>p p1. promised_prev a0 p p1 \<Longrightarrow> p \<prec> p0"
   and promised_previous_accepts: "\<And>p2. accepted a0 p2 \<Longrightarrow> p2 \<prec> p0"
 
-  and values_eq: "value_promised a0 p0 = value_accepted a0 p1"
-  shows "paxosL lt le quorum_proposer quorum_learner (%a p mp. (a, p, mp) = (a0, p0, Some p1) \<or> promised a p mp) proposed accepted chosen value_promised value_proposed value_accepted"
-using assms promised_Some promised_Some_accepted promised_None chosen_quorum accepts_proposed accepts_value
+  and values_eq: "value_promised a0 p0 = value_accepted a0 p'0"
+  shows "paxosL lt le quorum_proposer quorum_learner promised_free (%a p p'. (a, p, p') = (a0, p0, p'0) \<or> promised_prev a p p') proposed accepted chosen value_promised value_proposed value_accepted"
+using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
-  show "\<forall>p. proposed p \<longrightarrow> (\<exists>S. quorum_proposer S \<and>
-                            (\<forall>a2\<in>S. \<exists>mp. (a2, p, mp) = (a0, p0, Some p1) \<or> promised a2 p mp)
-                          \<and> (\<forall>a2\<in>S. \<forall>p2. (a2, p, Some p2) = (a0, p0, Some p1) \<or> promised a2 p (Some p2)
-                    \<longrightarrow> value_proposed p = value_promised a2 p \<or> (\<exists>a3\<in>S. \<exists>p3. ((a3, p, Some p3) = (a0, p0, Some p1) \<or> promised a3 p (Some p3)) \<and> p2 \<prec> p3)))"
-    (is "\<forall>p. proposed p \<longrightarrow> ?S_MESS p")
+  show "\<forall>a1 p1 p'1. ((a1, p1, p'1) = (a0, p0, p'0) \<or> promised_prev a1 p1 p'1) \<longrightarrow> accepted a1 p'1"
+    by (metis promised_prev_accepted accepted fst_conv snd_conv)
+  
+  show "\<forall>a1 p1 p'1. (a1, p1, p'1) = (a0, p0, p'0) \<or> promised_prev a1 p1 p'1 \<longrightarrow> p'1 \<prec> p1"
+    by (metis accepted fst_conv promised_prev_prev promised_previous_accepts snd_conv)
+
+  show "\<forall>a1 p1 p'1 p2. (a1, p1, p'1) = (a0, p0, p'0) \<or> promised_prev a1 p1 p'1 \<longrightarrow> accepted a1 p2 \<longrightarrow> p2 \<prec> p1 \<longrightarrow> p'1 = p2 \<and> value_accepted a1 p'1 = value_promised a1 p1 \<or> p2 \<prec> p'1"
+    by (metis Pair_inject accepted_max promised_prev_max propNo_leE snd_conv values_eq)
+
+  show "\<forall>p. proposed p \<longrightarrow> (\<exists>S. quorum_proposer S
+    \<and> (\<forall>a\<in>S. promised_free a p \<or> (\<exists>p1. (a, p, p1) = (a0, p0, p'0) \<or> promised_prev a p p1))
+    \<and> (\<forall>a1\<in>S. \<forall>p1. (a1, p, p1) = (a0, p0, p'0) \<or> promised_prev a1 p p1 \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. ((a2, p, p2) = (a0, p0, p'0) \<or> promised_prev a2 p p2) \<and> p1 \<prec> p2)))"
+    (is "\<forall>p. proposed p \<longrightarrow> ?P p")
   proof (intro allI impI)
     fix p assume p: "proposed p"
     from proposed_quorum [OF this]
     obtain S where qS: "quorum_proposer S"
-      and S_promised: "\<And>a. a \<in> S \<Longrightarrow> \<exists>mp. promised a p mp"
-      and S_max: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised a1 p (Some p1) \<rbrakk> \<Longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised a2 p (Some p2) \<and> p1 \<prec> p2)" by auto
-    show "?S_MESS p"
+      and S_promised: "\<And>a. a \<in> S \<Longrightarrow> promised_free a p \<or> (\<exists>p1. promised_prev a p p1)"
+      and S_max: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised_prev a1 p p1 \<rbrakk> \<Longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)" by auto
+    show "?P p"
     proof (intro exI [where x = S] conjI ballI allI impI)
       from qS show "quorum_proposer S" .
-      fix a2 assume a2S: "a2 \<in> S"
-      with S_promised obtain mp2 where mp2: "promised a2 p mp2" by auto
-      thus "\<exists>mp. (a2, p, mp) = (a0, p0, Some p1) \<or> promised a2 p mp" by auto
-      fix p2 assume p2: "(a2, p, Some p2) = (a0, p0, Some p1) \<or> promised a2 p (Some p2)"
-      thus "value_proposed p = value_promised a2 p \<or> (\<exists>a3\<in>S. \<exists>p3. ((a3, p, Some p3) = (a0, p0, Some p1) \<or> promised a3 p (Some p3)) \<and> p2 \<prec> p3)"
-        by (metis S_max a2S mp2 prod.sel(2) promised_newer propNo_irreflexive swap_simp)
+      fix a1 assume a1S: "a1 \<in> S"
+      show "promised_free a1 p \<or> (\<exists>p1. (a1, p, p1) = (a0, p0, p'0) \<or> promised_prev a1 p p1)"
+        by (metis S_promised a1S)
+
+      fix p1
+      assume "(a1, p, p1) = (a0, p0, p'0) \<or> promised_prev a1 p p1"
+      thus "value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. ((a2, p, p2) = (a0, p0, p'0) \<or> promised_prev a2 p p2) \<and> p1 \<prec> p2)"
+        by (metis S_max S_promised a1S fst_conv promised_free_newer promised_prev_newer propNo_irreflexive swap_simp)
     qed
   qed
-
-  show "\<forall>a1 p2 p3. (a1, p2, Some p3) = (a0, p0, Some p1) \<or> promised a1 p2 (Some p3) \<longrightarrow> accepted a1 p3 \<and> p3 \<prec> p2"
-    by (metis accepted option.sel prod.sel(1) promised_Some_accepted promised_previous_accepts swap_simp)
-
-  show "\<forall>a1 p2 p3 p4. (a1, p2, Some p3) = (a0, p0, Some p1) \<or> promised a1 p2 (Some p3)
-      \<longrightarrow> accepted a1 p4 \<longrightarrow> p4 \<prec> p2 \<longrightarrow> p3 = p4 \<and> value_accepted a1 p3 = value_promised a1 p2 \<or> p4 \<prec> p3"
-    by (metis accepted_max option.sel prod.sel(2) propNo_leE swap_simp values_eq promised_Some)
 qed simp_all
 
 (* The Acceptor only needs to know about what it's promised and accepted previously to accept a proposal *)
 lemma (in paxosL) paxos_add_accepted:
   assumes proposed_p0: "proposed p0"
-  assumes promised_le: "\<And>p1 mp. promised a0 p1 mp \<Longrightarrow> p1 \<preceq> p0"
+  assumes promised_free_le: "\<And>p1. promised_free a0 p1 \<Longrightarrow> p1 \<preceq> p0"
+  assumes promised_prev_le: "\<And>p1 p2. promised_prev a0 p1 p2 \<Longrightarrow> p1 \<preceq> p0"
   assumes proposed_val: "value_accepted a0 p0 = value_proposed p0"
-  shows "paxosL lt le quorum_proposer quorum_learner promised proposed (%a p. (a, p) = (a0, p0) \<or> accepted a p) chosen value_promised value_proposed value_accepted"
-using assms promised_Some promised_Some_accepted promised_None chosen_quorum accepts_proposed proposed_quorum
+  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed (%a p. (a, p) = (a0, p0) \<or> accepted a p) chosen value_promised value_proposed value_accepted"
+using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   show "\<forall>p. chosen p \<longrightarrow> (\<exists>S. quorum_learner S \<and> (\<forall>a\<in>S. (a, p) = (a0, p0) \<or> accepted a p))"
     (is "\<forall>p. chosen p \<longrightarrow> (\<exists>S. ?P p S)")
     by (metis chosen_quorum)
 
-  show "\<forall>a1 p1 p2. promised a1 p1 None \<longrightarrow> (a1, p2) = (a0, p0) \<or> accepted a1 p2 \<longrightarrow> p1 \<preceq> p2"
-    by (metis prod.sel promised_le promised_None)
+  show "\<forall>a1 p1 p2. promised_free a1 p1 \<longrightarrow> (a1, p2) = (a0, p0) \<or> accepted a1 p2 \<longrightarrow> p1 \<preceq> p2"
+    by (metis prod.sel promised_free_le promised_free)
 
-  show "\<forall>a1 p1 p2 p3. promised a1 p1 (Some p2) \<longrightarrow> (a1, p3) = (a0, p0) \<or> accepted a1 p3 \<longrightarrow> p3 \<prec> p1 \<longrightarrow> p2 = p3 \<and> value_accepted a1 p2 = value_promised a1 p1 \<or> p3 \<prec> p2"
-    by (metis prod.sel promised_Some promised_le propNo_irreflexive propNo_trans_lt_le)
+  show "\<forall>p a. (a, p) = (a0, p0) \<or> accepted a p \<longrightarrow> proposed p"
+    by (metis accepts_proposed prod.sel(2) proposed_p0)
+
+  show "\<forall>a1 p1 p2 p3. promised_prev a1 p1 p2 \<longrightarrow> (a1, p3) = (a0, p0) \<or> accepted a1 p3 \<longrightarrow> p3 \<prec> p1 \<longrightarrow> p2 = p3 \<and> value_accepted a1 p2 = value_promised a1 p1 \<or> p3 \<prec> p2"
+    apply (intro allI impI, elim disjE)
+    apply (metis prod.sel(1) promised_prev_le propNo_leE propNo_lt_not_ge_E swap_simp)
+    by (metis promised_prev_max)
 
   show "\<forall>p a. (a, p) = (a0, p0) \<or> accepted a p \<longrightarrow> value_accepted a p = value_proposed p"
     by (metis accepts_value prod.inject proposed_val)
 qed simp_all
 
 lemma (in paxosL) paxos_change_value_promised:
-  assumes accepted_eq: "\<And> a p p1. promised a p (Some p1) \<Longrightarrow> value_promised a p = value_promised' a p"
-  shows "paxosL lt le quorum_proposer quorum_learner promised proposed accepted chosen value_promised' value_proposed value_accepted"
-using assms promised_Some promised_Some_accepted promised_None chosen_quorum accepts_proposed proposed_quorum accepts_value
+  assumes accepted_eq: "\<And> a p p1. promised_prev a p p1 \<Longrightarrow> value_promised a p = value_promised' a p"
+  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed accepted chosen value_promised' value_proposed value_accepted"
+using assms proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
   by (unfold paxosL_def paxosL_axioms_def, simp_all)
 
 lemma (in paxosL) paxos_change_value_proposed:
   assumes proposed_eq: "\<And> p. proposed p \<Longrightarrow> value_proposed p = value_proposed' p"
-  shows "paxosL lt le quorum_proposer quorum_learner promised proposed accepted chosen value_promised value_proposed' value_accepted"
-using assms promised_Some promised_Some_accepted promised_None chosen_quorum accepts_proposed proposed_quorum
+  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed accepted chosen value_promised value_proposed' value_accepted"
+using assms proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   show "\<forall>p. proposed p \<longrightarrow>
-        (\<exists>S. quorum_proposer S \<and>
-             (\<forall>a\<in>S. \<exists>mp. promised a p mp) \<and>
-             (\<forall>a1\<in>S. \<forall>p1. promised a1 p (Some p1) \<longrightarrow> value_proposed' p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised a2 p (Some p2) \<and> p1 \<prec> p2)))"
+        (\<exists>S. quorum_proposer S
+        \<and> (\<forall>a\<in>S. promised_free a p \<or> (\<exists>p1. promised_prev a p p1))
+        \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev a1 p p1 \<longrightarrow> value_proposed' p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)))"
        (is "\<forall>p. proposed p \<longrightarrow> ?P p")
   proof (intro allI impI)
     fix p assume pp: "proposed p"
@@ -592,17 +575,22 @@ proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
 
   show "\<forall>p a. accepted a p \<longrightarrow> value_accepted a p = value_proposed' p"
     by (metis accepts_proposed accepts_value proposed_eq)
+
+  from promised_prev_max
+  show "\<forall>a p0 p1 p2. promised_prev a p0 p1 \<longrightarrow> accepted a p2 \<longrightarrow> p2 \<prec> p0 \<longrightarrow> p1 = p2 \<and> value_accepted a p1 = value_promised a p0 \<or> p2 \<prec> p1" by simp
+
 qed simp_all
 
 lemma (in paxosL) paxos_change_value_accepted:
   assumes accepted_eq: "\<And> a p. accepted a p \<Longrightarrow> value_accepted a p = value_accepted' a p"
-  shows "paxosL lt le quorum_proposer quorum_learner promised proposed accepted chosen value_promised value_proposed value_accepted'"
-using assms promised_Some promised_Some_accepted promised_None chosen_quorum accepts_proposed proposed_quorum
+  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted'"
+using assms proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   show "\<forall>p a. accepted a p \<longrightarrow> value_accepted' a p = value_proposed p"
     by (metis accepts_value assms)
 
-  show "\<forall>a0 p0 p1 p2. promised a0 p0 (Some p1) \<longrightarrow> accepted a0 p2 \<longrightarrow> p2 \<prec> p0 \<longrightarrow> p1 = p2 \<and> value_accepted' a0 p1 = value_promised a0 p0 \<or> p2 \<prec> p1"
-    by (metis assms promised_Some)
+    from assms
+  show "\<forall>a0 p0 p1 p2. promised_prev a0 p0 p1 \<longrightarrow> accepted a0 p2 \<longrightarrow> p2 \<prec> p0 \<longrightarrow> p1 = p2 \<and> value_accepted' a0 p1 = value_promised a0 p0 \<or> p2 \<prec> p1"
+    by (metis promised_prev_max)
 qed simp_all
 
