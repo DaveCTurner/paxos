@@ -17,7 +17,7 @@ Let
 - `v` be a function `pid -> val`, and
 - `vP` and `vA` be functions `acc -> pid -> val`.
 
-Intuitively, `QP` and `QL` are the collections of quorums from the Proposers' and Learners' points of view respectively. The predicates `promised`, `proposed`, `accepted` and `chosen` represent the messages that have been sent (but not necessarily received or processed by all other agents). The function `v` gives the values of proposals, and `vP` (resp. `vA`) gives the values of proposals that each acceptor has promised (resp. accepted).
+Intuitively, `QP` and `QL` are the collections of quorums from the Proposers' and Learners' points of view respectively. (`QP` and `QL` may differ to allow the membership of the group of acceptors to change). The predicates `promised`, `proposed`, `accepted` and `chosen` represent the messages that have been sent (but not necessarily received or processed by all other agents). The function `v` gives the values of proposals, and `vP` (resp. `vA`) gives the values of proposals that each acceptor has promised (resp. accepted).
 
 Given the following invariants:
 
