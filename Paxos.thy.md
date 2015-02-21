@@ -36,7 +36,7 @@ Given the following invariants:
   - `p2 < p1`
 - If `promised a p0 Nothing` and `accepted a p1` then `p0 < p1` or `p0 == p1`.
 
-Then any two chosen propositions `p1` and `p2` have `v p1 == v p2`.
+Then any two chosen propositions `p1` and `p2` have `v p1 == v p2`. This is theorem `paxos_consistent` in the theory file.
 
 This is the heart of the safety proof for Paxos. The predicates `promised`, `proposed` and `accepted` correspond to messages that may be sent. Pretty remarkable.
 
