@@ -54,7 +54,7 @@ lemma (in propNoL) propNo_trans_le_le [trans]:
   shows "p1 \<preceq> p3"
   by (metis le_lt_eq p12 p23 propNo_trans_lt_le)
 
-locale quorumL = 
+locale quorumL =
   fixes quorum_proposer :: "'acceptor set \<Rightarrow> bool"
   fixes quorum_learner  :: "'acceptor set \<Rightarrow> bool"
 
@@ -116,7 +116,7 @@ lemma (in paxosL) promised_fun:
 
 lemma (in paxosL)
   assumes "quorum_proposer S"
-  shows paxos_max_proposer: "(ALL a1:S. ALL mp. promised a1 p mp \<longrightarrow> mp = None) 
+  shows paxos_max_proposer: "(ALL a1:S. ALL mp. promised a1 p mp \<longrightarrow> mp = None)
  \<or> (EX a1:S. EX p1. promised a1 p (Some p1)
          \<and> (ALL a3:S. ALL p3. promised a3 p (Some p3) \<longrightarrow> p3 \<preceq> p1))"
   (is "?P1 S \<or> ?P2 S")
@@ -128,7 +128,7 @@ proof -
     case empty thus ?case by simp
   next
     case (insert a S')
-  
+
     show ?case
     proof (cases "EX mp. promised a p mp")
       case False
@@ -143,7 +143,7 @@ proof -
         then obtain a1 p1 where a1S: "a1 \<in> S'" and p: "promised a1 p (Some p1)"
           and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S'; promised a3 p (Some p3) \<rbrakk> \<Longrightarrow> p3 \<preceq> p1"
           by auto
-        
+
         show ?thesis
         proof (intro disjI2 bexI exI conjI ballI allI impI)
           from p show "promised a1 p (Some p1)" .
@@ -163,7 +163,7 @@ proof -
         show ?thesis
         proof (elim disjE)
           assume hyp1: "?P1 S'"
-          show ?thesis 
+          show ?thesis
           proof (intro disjI1 ballI allI impI)
             fix a1 mp'
             assume "a1 \<in> insert a S'" and p: "promised a1 p mp'"
@@ -185,7 +185,7 @@ proof -
         qed
       next
         case (Some p0)
-        
+
         from insert.hyps
         have "?P2 (insert a S')"
         proof (elim disjE)
@@ -245,7 +245,7 @@ proof -
             qed
           qed
         qed
-  
+
         thus ?thesis by simp
       qed
     qed
@@ -285,16 +285,16 @@ proof -
       from S_promised a2S obtain mp2 where "promised a2 p0 mp2" by auto
       with not_None obtain p2 where p2: "promised a2 p0 (Some p2)"
         by (cases mp2, auto)
-    
+
       from paxos_max_proposer [OF quorum_S, where p = p0]
       obtain a1 p1
         where a1S: "a1 \<in> S"
         and p1: "promised a1 p0 (Some p1)"
         and p1_max: "\<And>a3 p3. \<lbrakk> a3 \<in> S; promised a3 p0 (Some p3) \<rbrakk> \<Longrightarrow> p3 \<preceq> p1"
           by (metis a2S option.distinct(2) p2)
-  
+
       from p1 promised_Some_accepted have lt10: "p1 \<prec> p0" by auto
-  
+
       show ?thesis
       proof (intro exI conjI disjI2 bexI ballI allI impI)
         from p1 promised_Some_accepted show acc1: "accepted a1 p1" by simp
@@ -305,12 +305,12 @@ proof -
           by (metis acc1 lt10 p1 p1_max promised_Some propNo_leE propNo_lt_not_ge_E)
 
         from lt10 show "p1 \<prec> p0" .
-  
+
         fix a3 p3 assume a3S: "a3 \<in> S" and "accepted a3 p3 \<and> p3 \<prec> p0"
         hence acc3: "accepted a3 p3" and lt30: "p3 \<prec> p0" by auto
-  
+
         from a3S S_promised obtain mp3 where mp3: "promised a3 p0 mp3" by auto
-        
+
         show "p3 \<preceq> p1"
         proof (cases mp3)
           case None thus ?thesis by (metis acc3 lt30 mp3 promised_None propNo_leE propNo_lt_not_ge_E)
@@ -322,7 +322,7 @@ proof -
   qed
 qed
 
-lemma (in paxosL) p2b: 
+lemma (in paxosL) p2b:
   assumes chosen: "chosen p0"
   shows "\<And>p1. \<lbrakk> proposed p1; p0 \<preceq> p1 \<rbrakk> \<Longrightarrow> value_proposed p0 = value_proposed p1"
 proof -
@@ -351,7 +351,7 @@ proof -
           \<or> (\<exists>a1\<in>SP. \<exists>p1a. accepted a1 p1a \<and> value_proposed p1 = value_accepted a1 p1a \<and> p1a \<prec> p1
               \<and> (\<forall>a2\<in>SP. \<forall>p2. accepted a2 p2 \<and> p2 \<prec> p1 \<longrightarrow> p2 \<preceq> p1a)))"
           (is "?P1 \<or> ?P2") by auto
-  
+
         from SP_quorum SC_quorum quorum_inter
         obtain a where aSP: "a \<in> SP" and aSC: "a \<in> SL" by auto
 
@@ -388,7 +388,7 @@ theorem (in paxosL)
   assumes chosen1: "chosen p1"
   shows paxos_consistent: "value_proposed p0 = value_proposed p1"
   by (metis assms le_lt_eq p2 propNo_cases)
-  
+
 lemma paxos_empty:
   assumes propNoL: "propNoL lt le"
   assumes quorumL: "quorumL quorum_proposer quorum_learner"
@@ -486,7 +486,7 @@ proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
     with proposed_quorum [OF this] obtain S where S_quorum: "quorum_proposer S"
       and S_accepted: "\<And>a. a \<in> S \<Longrightarrow> EX mp. promised a p mp"
       and S_consistent: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised a1 p (Some p1) \<rbrakk> \<Longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised a2 p (Some p2) \<and> p1 \<prec> p2)" by auto
-      
+
     from S_quorum
     show "(\<exists>S. quorum_proposer S \<and> (\<forall>a\<in>S. \<exists>mp. (a, p, mp) = (a0, p0, None) \<or> promised a p mp) \<and> (\<forall>a1\<in>S. \<forall>p1. (a1, p, Some p1) = (a0, p0, None) \<or> promised a1 p (Some p1) \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. ((a2, p, Some p2) = (a0, p0, None) \<or> promised a2 p (Some p2)) \<and> p1 \<prec> p2)))"
     proof (intro exI [where x = S] conjI ballI allI impI)
@@ -516,7 +516,7 @@ lemma (in paxosL) paxos_add_promise_Some:
 using assms promised_Some promised_Some_accepted promised_None chosen_quorum accepts_proposed accepts_value
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   show "\<forall>p. proposed p \<longrightarrow> (\<exists>S. quorum_proposer S \<and>
-                            (\<forall>a2\<in>S. \<exists>mp. (a2, p, mp) = (a0, p0, Some p1) \<or> promised a2 p mp) 
+                            (\<forall>a2\<in>S. \<exists>mp. (a2, p, mp) = (a0, p0, Some p1) \<or> promised a2 p mp)
                           \<and> (\<forall>a2\<in>S. \<forall>p2. (a2, p, Some p2) = (a0, p0, Some p1) \<or> promised a2 p (Some p2)
                     \<longrightarrow> value_proposed p = value_promised a2 p \<or> (\<exists>a3\<in>S. \<exists>p3. ((a3, p, Some p3) = (a0, p0, Some p1) \<or> promised a3 p (Some p3)) \<and> p2 \<prec> p3)))"
     (is "\<forall>p. proposed p \<longrightarrow> ?S_MESS p")
@@ -589,7 +589,7 @@ proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
     from pp proposed_quorum [OF pp]
     show "?P p" by (unfold proposed_eq [OF pp])
   qed
-    
+
   show "\<forall>p a. accepted a p \<longrightarrow> value_accepted a p = value_proposed' p"
     by (metis accepts_proposed accepts_value proposed_eq)
 qed simp_all
