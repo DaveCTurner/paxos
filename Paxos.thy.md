@@ -61,9 +61,9 @@ The remainder of the file shows that the empty model (containing no messages) is
 ### For a learner:
 
 1. If there's a quorum of acceptors `S ∈ QL p` that all accept a proposal `p` then that proposal may be chosen.
-2. `QL p` can be freely changed as long as its elements all remain quorums; in particular 
-    a. extra quorums may be added to `QL p`, and
-    b. if `p` can never be chosen then `QL p` can be changed freely.
+2. `QL p` can be freely changed as long as its elements all remain quorums; in particular
+  1. extra quorums may be added to `QL p`, and
+  2. if `p` can never be chosen then `QL p` can be changed freely.
 
 ### For an acceptor
 
