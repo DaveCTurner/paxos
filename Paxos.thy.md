@@ -7,10 +7,8 @@ Let
 - `acc` the type of acceptors,
 - `val` the type of values of proposals,
 - `<` be an ordering on `pid` which is transitive, wellfounded and total,
-- `QP` and `QL` be collections of finite subsets of `acc` such that
-  - every member of `QP` intersects every member of `QL`,
-  - every member of `QP` is finite,
-  - `QP` is nonempty
+- `QP` be a nonempty collection of finite subsets of `acc`,
+- `QL` be a function `pid -> Powerset(acc)` such that for every proposal `p` every member of `QP` intersects every member of `QL p`,
 - `promised_free` be a binary relation on `acc * pid`,
 - `promised_prev` be a ternary relation on `acc * pid * pid`,
 - `accepted` be a binary relation on `acc * pid`, and
@@ -18,7 +16,7 @@ Let
 - `v` be a function `pid -> val`, and
 - `vP` and `vA` be functions `acc -> pid -> val`.
 
-Intuitively, `QP` and `QL` are the collections of quorums from the Proposers' and Learners' points of view respectively. (`QP` and `QL` are typically equal but are permitted to vary like this to support changing the membership of the group of acceptors whilst remaining consistent). The function `v` gives the values of proposals which have been proposed, and `vP` (resp. `vA`) gives the values of proposals that each acceptor has promised (resp. accepted). The predicates `promised_free`, `promised_prev`, `proposed`, `accepted` and `chosen` represent the messages that have been sent (but not necessarily received or processed by all other agents):
+Intuitively, `QP` and `QL p` are the collections of quorums from the Proposers' and Learners' points of view respectively. (`QP` and `QL p` are typically equal but are permitted to vary like this to support changing the membership of the group of acceptors whilst remaining consistent). The function `v` gives the values of proposals which have been proposed, and `vP` (resp. `vA`) gives the values of proposals that each acceptor has promised (resp. accepted). The predicates `promised_free`, `promised_prev`, `proposed`, `accepted` and `chosen` represent the messages that have been sent (but not necessarily received or processed by all other agents):
 - `promised_free a p` indicates that acceptor `a` promises to accept no proposals numbered below `p`, and that it has not yet accepted any proposal.
 - `promised_prev a p p'` indicates that acceptor `a` promises to accept no proposals numbered below `p`, and that it accepted proposal `p'` but has accepted no later one.
 - `proposed p` indicates that proposal `p` has been made by some proposer.
@@ -27,7 +25,7 @@ Intuitively, `QP` and `QL` are the collections of quorums from the Proposers' an
 
 Given the following invariants:
 
-- If `chosen p` then there exists a quorum `S ∈ QL` such that if `a ∈ S` then `accepted a p`.
+- If `chosen p` then there exists a quorum `S ∈ QL p` such that if `a ∈ S` then `accepted a p`.
 - If `proposed p` then there exists a quorum `S ∈ QP` such that if `a ∈ S` then `promised_free a p` or `promised_prev a p _`, and either
   - `promised_free a p Nothing` for all `a ∈ S`, or
   - for each `a1 ∈ S` with `promised_prev a1 p p1`, either
@@ -62,7 +60,7 @@ The remainder of the file shows that the empty model (containing no messages) is
 
 ### For a learner:
 
-1. If there's a quorum of acceptors `S ∈ QP` that all accept a proposal then that proposal can be chosen.
+1. If there's a quorum of acceptors `S ∈ QL p` that all accept a proposal `p` then that proposal may be chosen.
 
 ### For an acceptor
 
