@@ -19,8 +19,8 @@ Let
 - `vP` and `vA` be functions `acc -> pid -> val`.
 
 Intuitively, `QP` and `QL` are the collections of quorums from the Proposers' and Learners' points of view respectively. (`QP` and `QL` may differ to allow the membership of the group of acceptors to change). The function `v` gives the values of proposals which have been proposed, and `vP` (resp. `vA`) gives the values of proposals that each acceptor has promised (resp. accepted). The predicates `promised_free`, `promised_prev`, `proposed`, `accepted` and `chosen` represent the messages that have been sent (but not necessarily received or processed by all other agents):
-- `promised free a p` indicates that acceptor `a` promises to accept no proposals numbered below `p`, and that it has not yet accepted any proposal.
-- `promised prev a p p'` indicates that acceptor `a` promises to accept no proposals numbered below `p`, and that it accepted proposal `p'` but has accepted no later one.
+- `promised_free a p` indicates that acceptor `a` promises to accept no proposals numbered below `p`, and that it has not yet accepted any proposal.
+- `promised_prev a p p'` indicates that acceptor `a` promises to accept no proposals numbered below `p`, and that it accepted proposal `p'` but has accepted no later one.
 - `proposed p` indicates that proposal `p` has been made by some proposer.
 - `accepted a p` indicates that acceptor `a` accepts proposal `p`.
 - `chosen p` indicates that proposal `p` has been chosen by some learner.
