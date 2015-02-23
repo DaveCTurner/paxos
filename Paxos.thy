@@ -83,7 +83,7 @@ fun quorum_learner :: "('acceptor, 'pid) quorum \<Rightarrow> 'pid \<Rightarrow>
 
 lemma
   quorum_inter: "\<And> SP SL p. \<lbrakk> quorum_proposer quorum SP; quorum_learner quorum p SL \<rbrakk> \<Longrightarrow> SP \<inter> SL \<noteq> {}"
-  and quorum_finite: "\<And> SP. quorum_proposer quorum SP \<Longrightarrow> finite SP"
+  and quorum_finite [simp]: "\<And> SP. quorum_proposer quorum SP \<Longrightarrow> finite SP"
   and quorum_exists: "EX SP. quorum_proposer quorum SP"
 proof -
   have eq: "Rep_quorum quorum = (quorum_proposer quorum, quorum_learner quorum)"
@@ -100,6 +100,22 @@ proof -
   from p show "\<And> SP. quorum_proposer quorum SP \<Longrightarrow> finite SP" and "EX SP. quorum_proposer quorum SP"
     by auto
 qed
+
+lemma obtain_quorum:
+  assumes "\<And> SP SL p. \<lbrakk> qp SP; ql p SL \<rbrakk> \<Longrightarrow> SP \<inter> SL \<noteq> {}"
+    and "\<And> SP. qp SP \<Longrightarrow> finite SP"
+    and "EX SP. qp SP"
+  obtains q where "quorum_proposer q = qp" and "quorum_learner q = ql"
+proof (intro that)
+  have Rep_q: "Rep_quorum (Abs_quorum (qp, ql)) = (qp, ql)"
+    by (intro Abs_quorum_inverse CollectI, unfold Product_Type.split, intro conjI impI allI assms)
+  
+  thus "quorum_proposer (Abs_quorum (qp, ql)) = qp"
+    and "quorum_learner (Abs_quorum (qp, ql)) = ql" by simp_all
+qed
+
+declare quorum_proposer.simps [simp del]
+declare quorum_learner.simps [simp del]
 
 locale paxosL = propNoL +
 
@@ -755,52 +771,57 @@ proof -
   hence b: "\<And>R. (if R then insert a A else A) = insert (if R then a else b) A"
     by auto
 
-  def q == "Abs_quorum (isMajority (if Q   then insert a A else A),
-                    %p. isMajority (if P p then insert a A else A))"
-
-  have Rep_q: "Rep_quorum q = (isMajority (if Q   then insert a A else A),
-                    %p. isMajority (if P p then insert a A else A))"
+  show ?thesis
   proof (cases Q)
     case False
     hence Q: "(if Q then insert a A else A) = A" by simp
-    show ?thesis
-    proof (unfold q_def Q, intro Abs_quorum_inverse, intro CollectI, unfold Product_Type.split, intro conjI allI impI exI majority_insert_intersects)
-      from assms show "isMajority A A"
-        by (simp add: card_gt_0_iff)
+    show thesis
+    proof (rule obtain_quorum)
+      from assms False show "EX SP. isMajority (if Q then insert a A else A) SP"
+        by (intro exI [where x = A], simp add: card_gt_0_iff)
   
-      fix SP assume SP: "isMajority A SP"
-      thus "isMajority A SP" .
+      fix SP assume SP: "isMajority (if Q then insert a A else A) SP"
       thus "finite SP" by simp
-  
+
       fix p SL
       assume SL: "isMajority (if P p then insert a A else A) SL"
-      thus "isMajority (insert (if P p then a else b) A) SL" by (unfold b)
+
+      thus "SP \<inter> SL \<noteq> {}"
+        by (intro majority_insert_intersects [OF SP], unfold Q, unfold b)
+    next
+      fix q
+      assume qp: "quorum_proposer q = isMajority (if Q then insert a A else A)"
+        and ql: "quorum_learner q = (\<lambda>p SL. isMajority (if P p then insert a A else A) SL)"
+      hence "\<And>p. quorum_learner q p = isMajority (if P p then insert a A else A)" by metis
+      thus thesis by (intro that [OF qp])
     qed
   next
     case True
     hence Q: "(if Q then insert a A else A) = insert a A" by simp
-    show ?thesis
-    proof (unfold q_def Q, intro Abs_quorum_inverse, intro CollectI, unfold Product_Type.split, intro conjI allI impI exI)
-      from assms show "isMajority (insert a A) (insert a A)"
-        by (simp add: card_gt_0_iff)
+    show thesis
+    proof (rule obtain_quorum)
+      from assms True show "EX SP. isMajority (if Q then insert a A else A) SP"
+        by (intro exI [where x = "insert a A"], simp add: card_gt_0_iff)
   
-      fix SP assume SP: "isMajority (insert a A) SP"
+      fix SP assume SP: "isMajority (if Q then insert a A else A) SP"
       thus "finite SP" by simp
-  
+
       fix p SL
       assume SL: "isMajority (if P p then insert a A else A) SL"
-
+      
       have "SP \<inter> SL = SL \<inter> SP" by auto
       also have "... \<noteq> {}"
-      proof (intro majority_insert_intersects)
-        from SL show "isMajority (if P p then insert a A else A) SL" .
-        from SP show "isMajority (insert a (if P p then insert a A else A)) SP" by auto
+      proof (intro majority_insert_intersects [OF SL])
+        from SP show "isMajority (insert a (if P p then insert a A else A)) SP" by (auto simp add: Q)
       qed
       finally show "SP \<inter> SL \<noteq> {}" .
+    next
+      fix q
+      assume qp: "quorum_proposer q = isMajority (if Q then insert a A else A)"
+        and ql: "quorum_learner q = (\<lambda>p SL. isMajority (if P p then insert a A else A) SL)"
+      hence "\<And>p. quorum_learner q p = isMajority (if P p then insert a A else A)" by metis
+      thus thesis by (intro that [OF qp])
     qed
   qed
-
-  show ?thesis
-  by (intro that [where q = q], simp_all add: Rep_q)
 qed
 
