@@ -54,18 +54,56 @@ lemma (in propNoL) propNo_trans_le_le [trans]:
   shows "p1 \<preceq> p3"
   by (metis le_lt_eq p12 p23 propNo_trans_lt_le)
 
-locale quorumL =
-  fixes quorum_proposer :: "'acceptor set \<Rightarrow> bool"
-  fixes quorum_learner  :: "'pid \<Rightarrow> 'acceptor set \<Rightarrow> bool"
+typedef ('acceptor, 'pid) quorum
+  = "{ (quorum_proposer :: 'acceptor set \<Rightarrow> bool
+      ,quorum_learner  :: 'pid \<Rightarrow> 'acceptor set \<Rightarrow> bool
+      ).
+      (ALL SP SL p. quorum_proposer SP \<longrightarrow> quorum_learner p SL \<longrightarrow> SP \<inter> SL \<noteq> {})
+      \<and> (ALL SP. quorum_proposer SP \<longrightarrow> finite SP)
+      \<and> (EX SP. quorum_proposer SP)}"
+proof -
+  obtain a where "(a :: 'acceptor) = a" by simp
+  def x == "((%S. finite S \<and> a \<in> S), (%(p :: 'pid) S. a \<in> S))"
+  def qp == "fst x"
+  def ql == "snd x"
+  
+  let "?P1 qp ql" = "ALL SP SL p. qp SP \<longrightarrow> ql p SL \<longrightarrow> SP \<inter> SL \<noteq> {}"
+  let "?P2 qp" = "ALL SP. qp SP \<longrightarrow> finite SP"
+  let "?P3 qp" = "EX SP. qp SP"
 
-  assumes quorum_inter:
-    "\<And> SP SL p. \<lbrakk> quorum_proposer SP; quorum_learner p SL \<rbrakk> \<Longrightarrow> SP \<inter> SL \<noteq> {}"
-  assumes quorum_finite: "\<And> SP. quorum_proposer SP \<Longrightarrow> finite SP"
+  show "\<exists>x. x \<in> {(qp,ql). ?P1 qp ql \<and> ?P2 qp \<and> ?P3 qp}"
+    by (intro exI [where x = x], auto simp add: x_def)
+qed
 
-  assumes quorum_exists: "EX SP. quorum_proposer SP"
+fun quorum_proposer :: "('acceptor, 'pid) quorum \<Rightarrow> 'acceptor set \<Rightarrow> bool"
+  where "quorum_proposer q = (case Rep_quorum q of (qp,_) \<Rightarrow> qp)"
 
-locale paxosL = propNoL + quorumL +
+fun quorum_learner :: "('acceptor, 'pid) quorum \<Rightarrow> 'pid \<Rightarrow> 'acceptor set \<Rightarrow> bool"
+  where "quorum_learner q = (case Rep_quorum q of (_,ql) \<Rightarrow> ql)"
 
+lemma
+  quorum_inter: "\<And> SP SL p. \<lbrakk> quorum_proposer quorum SP; quorum_learner quorum p SL \<rbrakk> \<Longrightarrow> SP \<inter> SL \<noteq> {}"
+  and quorum_finite: "\<And> SP. quorum_proposer quorum SP \<Longrightarrow> finite SP"
+  and quorum_exists: "EX SP. quorum_proposer quorum SP"
+proof -
+  have eq: "Rep_quorum quorum = (quorum_proposer quorum, quorum_learner quorum)"
+    by (simp add: case_prod_beta)
+  
+  from Rep_quorum [where x = quorum]
+  have p: "(\<forall>SP SL p. quorum_proposer quorum SP \<longrightarrow> quorum_learner quorum p SL \<longrightarrow> SP \<inter> SL \<noteq> {}) \<and> (\<forall>SP. quorum_proposer quorum SP \<longrightarrow> finite SP) \<and> (\<exists>SP. quorum_proposer quorum SP)"
+    by (unfold eq, simp)
+
+  from p have "\<forall>SP SL p. quorum_proposer quorum SP \<longrightarrow> quorum_learner quorum p SL \<longrightarrow> SP \<inter> SL \<noteq> {}" ..
+  thus "\<And> SP SL p. \<lbrakk> quorum_proposer quorum SP; quorum_learner quorum p SL \<rbrakk> \<Longrightarrow> SP \<inter> SL \<noteq> {}" 
+    by (elim allE impE)
+
+  from p show "\<And> SP. quorum_proposer quorum SP \<Longrightarrow> finite SP" and "EX SP. quorum_proposer quorum SP"
+    by auto
+qed
+
+locale paxosL = propNoL +
+
+  fixes quorum :: "('acceptor, 'pid) quorum"
   fixes promised_free :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> bool"
   fixes promised_prev :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> 'pid \<Rightarrow> bool"
   fixes proposed :: "'pid \<Rightarrow> bool"
@@ -76,7 +114,7 @@ locale paxosL = propNoL + quorumL +
   fixes value_accepted :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> 'value"
 
   assumes proposed_quorum:
-    "\<And> p . proposed p \<Longrightarrow> EX S. quorum_proposer S
+    "\<And> p . proposed p \<Longrightarrow> EX S. quorum_proposer quorum S
       \<and> (ALL a:S. promised_free a p \<or> (EX p1. promised_prev a p p1))
       \<and> (ALL a1:S. ALL p1. promised_prev a1 p p1
           \<longrightarrow> value_proposed p = value_promised a1 p
@@ -99,7 +137,7 @@ locale paxosL = propNoL + quorumL +
     "\<And> p a. accepted a p \<Longrightarrow> value_accepted a p = value_proposed p"
 
   assumes chosen_quorum:
-    "\<And> p . chosen p \<Longrightarrow> EX S. quorum_learner p S \<and> (ALL a:S. accepted a p)"
+    "\<And> p . chosen p \<Longrightarrow> EX S. quorum_learner quorum p S \<and> (ALL a:S. accepted a p)"
 
 lemma (in paxosL) promised_some_none:
   assumes "promised_prev a p0 p1" "promised_free a p0"
@@ -116,7 +154,7 @@ lemma (in paxosL) promised_prev_fun:
   by (metis assms promised_prev_accepted promised_prev_max promised_prev_prev propNo_lt_not_ge_E)
 
 lemma (in paxosL)
-  assumes "quorum_proposer S"
+  assumes "quorum_proposer quorum S"
   shows paxos_max_proposer: "(ALL a0:S. ALL p1. \<not> promised_prev a0 p p1)
  \<or> (EX a1:S. EX p1. promised_prev a1 p p1
          \<and> (ALL a3:S. ALL p3. promised_prev a3 p p3 \<longrightarrow> p3 \<preceq> p1))"
@@ -224,7 +262,7 @@ qed
 
 lemma (in paxosL) p2c:
   assumes proposed_p0: "proposed p0"
-  obtains S where "quorum_proposer S"
+  obtains S where "quorum_proposer quorum S"
     and "(ALL a1 : S. ALL p1. p1 \<prec> p0 \<longrightarrow> \<not> accepted a1 p1)
     \<or> (EX a1 : S. EX p1. accepted a1 p1
         \<and> value_proposed p0 = value_accepted a1 p1
@@ -232,13 +270,13 @@ lemma (in paxosL) p2c:
         \<and> (ALL a2 : S. ALL p2. (accepted a2 p2 \<and> p2 \<prec> p0) \<longrightarrow> p2 \<preceq> p1))"
 proof -
   from proposed_quorum [OF proposed_p0]
-  obtain S where quorum_S: "quorum_proposer S"
+  obtain S where quorum_S: "quorum_proposer quorum S"
     and S_promised: "\<And> a1. a1 \<in> S \<Longrightarrow> promised_free a1 p0 \<or> (\<exists>p1. promised_prev a1 p0 p1)"
     and S_value: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised_prev a1 p0 p1 \<rbrakk> \<Longrightarrow> value_proposed p0 = value_promised a1 p0 \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p0 p2 \<and> p1 \<prec> p2)"
     by auto
   show thesis
   proof (intro that)
-    from quorum_S show "quorum_proposer S" .
+    from quorum_S show "quorum_proposer quorum S" .
     show "(ALL a1 : S. ALL p1. p1 \<prec> p0 \<longrightarrow> \<not> accepted a1 p1)
         \<or> (EX a1 : S. EX p1. accepted a1 p1
             \<and> value_proposed p0 = value_accepted a1 p1
@@ -291,7 +329,7 @@ lemma (in paxosL) p2b:
   shows "\<And>p1. \<lbrakk> proposed p1; p0 \<preceq> p1 \<rbrakk> \<Longrightarrow> value_proposed p0 = value_proposed p1"
 proof -
   from chosen_quorum [OF chosen] obtain SL
-    where SC_quorum: "quorum_learner p0 SL"
+    where SC_quorum: "quorum_learner quorum p0 SL"
     and SC_accepts: "\<And>a. \<lbrakk> a \<in> SL \<rbrakk> \<Longrightarrow> accepted a p0" by auto
 
   fix p1_base
@@ -310,7 +348,7 @@ proof -
       show ?thesis
       proof -
 
-        from p2c [OF proposed] obtain SP where SP_quorum: "quorum_proposer SP"
+        from p2c [OF proposed] obtain SP where SP_quorum: "quorum_proposer quorum SP"
           and S_mess: "((\<forall>a1\<in>SP. \<forall>p1a. p1a \<prec> p1 \<longrightarrow> \<not> accepted a1 p1a)
           \<or> (\<exists>a1\<in>SP. \<exists>p1a. accepted a1 p1a \<and> value_proposed p1 = value_accepted a1 p1a \<and> p1a \<prec> p1
               \<and> (\<forall>a2\<in>SP. \<forall>p2. accepted a2 p2 \<and> p2 \<prec> p1 \<longrightarrow> p2 \<preceq> p1a)))"
@@ -356,39 +394,35 @@ theorem (in paxosL)
 
 lemma paxos_empty:
   assumes propNoL: "propNoL lt le"
-  assumes quorumL: "quorumL quorum_proposer quorum_learner"
   assumes no_promise: "\<And> a p p1. \<not>promised_prev a p p1"
   assumes no_promise: "\<And> a p. \<not>promised_free a p"
   assumes no_proposed: "\<And> p. \<not>proposed p"
   assumes no_accepted: "\<And> a p. \<not>accepted a p"
   assumes no_chosen: "\<And> p. \<not>chosen p"
 
-  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
+  shows "paxosL lt le quorum promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
 using assms by (auto simp add: paxosL_def paxosL_axioms_def)
 
 lemma (in paxosL) paxos_propNo [simp]: "propNoL lt le"
 using wf trans total by (auto simp add: propNoL_def)
 
-lemma (in paxosL) paxos_quorum [simp]: "quorumL quorum_proposer quorum_learner"
-using quorum_finite quorum_inter quorum_exists by (auto simp add: quorumL_def)
-
 lemma (in paxosL) paxos_add_proposal_free:
-  assumes quorum_S: "quorum_proposer S"
+  assumes quorum_S: "quorum_proposer quorum S"
   assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> promised_free a p0"
-  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev (%p. p = p0 \<or> proposed p) accepted chosen value_promised value_proposed value_accepted"
+  shows "paxosL lt le quorum promised_free promised_prev (%p. p = p0 \<or> proposed p) accepted chosen value_promised value_proposed value_accepted"
 (* the proposer only needs to know about 'promised' messages to send a 'proposed' message *)
 using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
 
   from proposed_quorum
-  show "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> (\<exists>S. quorum_proposer S \<and> (\<forall>a\<in>S. promised_free a p \<or> (\<exists> p1. promised_prev a p p1)) 
+  show "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> (\<exists>S. quorum_proposer quorum S \<and> (\<forall>a\<in>S. promised_free a p \<or> (\<exists> p1. promised_prev a p p1)) 
     \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev a1 p p1 \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)))"
     (is "\<forall> p. p = p0 \<or> proposed p \<longrightarrow> ?P p")
   proof (intro allI impI, elim disjE)
     fix p assume pp0: "p = p0"
     show "?P p"
     proof (intro exI [where x = S] conjI ballI allI impI)
-      from quorum_S show "quorum_proposer S" .
+      from quorum_S show "quorum_proposer quorum S" .
       fix a1 assume a1S: "a1 \<in> S"
       with promised_S pp0 show "promised_free a1 p \<or> (\<exists>p1. promised_prev a1 p p1)" by auto
 
@@ -402,15 +436,15 @@ qed simp_all
 
 
 lemma (in paxosL) paxos_add_proposal_constrained:
-  assumes quorum_S: "quorum_proposer S"
+  assumes quorum_S: "quorum_proposer quorum S"
   assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> promised_free a p0 \<or> (EX p1. promised_prev a p0 p1)"
   assumes promised_S_value: "\<And>a p1. a \<in> S \<Longrightarrow> promised_prev a p0 p1 \<Longrightarrow> value_proposed p0 = value_promised a p0 \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p0 p2 \<and> p1 \<prec> p2)"
-  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev (%p. p = p0 \<or> proposed p) accepted chosen value_promised value_proposed value_accepted"
+  shows "paxosL lt le quorum promised_free promised_prev (%p. p = p0 \<or> proposed p) accepted chosen value_promised value_proposed value_accepted"
 (* the Proposer only needs to know about promised messages (and 'value') to send a 'proposed' message *)
 using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   from proposed_quorum
-  show "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> (\<exists>S. quorum_proposer S 
+  show "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> (\<exists>S. quorum_proposer quorum S 
       \<and> (\<forall>a\<in>S. promised_free a p \<or> (\<exists>p1. promised_prev a p p1))
       \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev a1 p p1 \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)))"
       (is "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> ?P p")
@@ -418,7 +452,7 @@ proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
     fix p assume pp0: "p = p0"
     show "?P p"
     proof (intro exI [where x = S] conjI ballI allI impI)
-      from quorum_S show "quorum_proposer S" .
+      from quorum_S show "quorum_proposer quorum S" .
       fix a1 assume a1S: "a1 \<in> S"
       with promised_S pp0 show "promised_free a1 p \<or> (EX p1. promised_prev a1 p p1)" by simp
 
@@ -431,13 +465,13 @@ proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
 qed simp_all
 
 lemma (in paxosL) paxos_add_choice:
-  assumes quorum_S: "quorum_learner p0 S"
+  assumes quorum_S: "quorum_learner quorum p0 S"
   assumes accepted_S: "\<And>a. a \<in> S \<Longrightarrow> accepted a p0"
-  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed accepted (%p. p = p0 \<or> chosen p) value_promised value_proposed value_accepted"
+  shows "paxosL lt le quorum promised_free promised_prev proposed accepted (%p. p = p0 \<or> chosen p) value_promised value_proposed value_accepted"
 (* the Learner only needs to know about accepted messages to send a 'chosen' message. *)
 using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
-  show "\<forall>p. p = p0 \<or> chosen p \<longrightarrow> (\<exists>S. quorum_learner p S \<and> (\<forall>a\<in>S. accepted a p))"
+  show "\<forall>p. p = p0 \<or> chosen p \<longrightarrow> (\<exists>S. quorum_learner quorum p S \<and> (\<forall>a\<in>S. accepted a p))"
     by (metis chosen_quorum assms)
 qed simp_all
 
@@ -445,19 +479,19 @@ qed simp_all
 to send promised messages *)
 lemma (in paxosL) paxos_add_promise_free:
   assumes not_accepted: "\<And>p. \<not>accepted a0 p"
-  shows   "paxosL lt le quorum_proposer quorum_learner (%a p. (a, p) = (a0, p0) \<or> promised_free a p) promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
+  shows   "paxosL lt le quorum (%a p. (a, p) = (a0, p0) \<or> promised_free a p) promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
 using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   from assms promised_free
   show "\<forall>a p0a p1. (a, p0a) = (a0, p0) \<or> promised_free a p0a \<longrightarrow> accepted a p1 \<longrightarrow> p0a \<preceq> p1" by simp
 
-  show "\<forall>p. proposed p \<longrightarrow> (\<exists>S. quorum_proposer S
+  show "\<forall>p. proposed p \<longrightarrow> (\<exists>S. quorum_proposer quorum S
     \<and> (\<forall>a\<in>S. ((a, p) = (a0, p0) \<or> promised_free a p) \<or> (\<exists>p1. promised_prev a p p1))
     \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev a1 p p1 \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)))"
       (is "\<forall>p. proposed p \<longrightarrow> ?P p")
   proof (intro allI impI)
     fix p assume proposed: "proposed p"
-    with proposed_quorum [OF this] obtain S where S_quorum: "quorum_proposer S"
+    with proposed_quorum [OF this] obtain S where S_quorum: "quorum_proposer quorum S"
       and S_accepted: "\<And>a. a \<in> S \<Longrightarrow>  promised_free a p \<or> (\<exists>p1. promised_prev a p p1)"
       and S_consistent: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised_prev a1 p p1 \<rbrakk> \<Longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)" by auto
 
@@ -487,7 +521,7 @@ lemma (in paxosL) paxos_add_promise_Some:
   and promised_previous_accepts: "\<And>p2. accepted a0 p2 \<Longrightarrow> p2 \<prec> p0"
 
   and values_eq: "value_promised a0 p0 = value_accepted a0 p'0"
-  shows "paxosL lt le quorum_proposer quorum_learner promised_free (%a p p'. (a, p, p') = (a0, p0, p'0) \<or> promised_prev a p p') proposed accepted chosen value_promised value_proposed value_accepted"
+  shows "paxosL lt le quorum promised_free (%a p p'. (a, p, p') = (a0, p0, p'0) \<or> promised_prev a p p') proposed accepted chosen value_promised value_proposed value_accepted"
 using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   show "\<forall>a1 p1 p'1. ((a1, p1, p'1) = (a0, p0, p'0) \<or> promised_prev a1 p1 p'1) \<longrightarrow> accepted a1 p'1"
@@ -499,19 +533,19 @@ proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   show "\<forall>a1 p1 p'1 p2. (a1, p1, p'1) = (a0, p0, p'0) \<or> promised_prev a1 p1 p'1 \<longrightarrow> accepted a1 p2 \<longrightarrow> p2 \<prec> p1 \<longrightarrow> p'1 = p2 \<and> value_accepted a1 p'1 = value_promised a1 p1 \<or> p2 \<prec> p'1"
     by (metis Pair_inject accepted_max promised_prev_max propNo_leE snd_conv values_eq)
 
-  show "\<forall>p. proposed p \<longrightarrow> (\<exists>S. quorum_proposer S
+  show "\<forall>p. proposed p \<longrightarrow> (\<exists>S. quorum_proposer quorum S
     \<and> (\<forall>a\<in>S. promised_free a p \<or> (\<exists>p1. (a, p, p1) = (a0, p0, p'0) \<or> promised_prev a p p1))
     \<and> (\<forall>a1\<in>S. \<forall>p1. (a1, p, p1) = (a0, p0, p'0) \<or> promised_prev a1 p p1 \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. ((a2, p, p2) = (a0, p0, p'0) \<or> promised_prev a2 p p2) \<and> p1 \<prec> p2)))"
     (is "\<forall>p. proposed p \<longrightarrow> ?P p")
   proof (intro allI impI)
     fix p assume p: "proposed p"
     from proposed_quorum [OF this]
-    obtain S where qS: "quorum_proposer S"
+    obtain S where qS: "quorum_proposer quorum S"
       and S_promised: "\<And>a. a \<in> S \<Longrightarrow> promised_free a p \<or> (\<exists>p1. promised_prev a p p1)"
       and S_max: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised_prev a1 p p1 \<rbrakk> \<Longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)" by auto
     show "?P p"
     proof (intro exI [where x = S] conjI ballI allI impI)
-      from qS show "quorum_proposer S" .
+      from qS show "quorum_proposer quorum S" .
       fix a1 assume a1S: "a1 \<in> S"
       show "promised_free a1 p \<or> (\<exists>p1. (a1, p, p1) = (a0, p0, p'0) \<or> promised_prev a1 p p1)"
         by (metis S_promised a1S)
@@ -530,10 +564,10 @@ lemma (in paxosL) paxos_add_accepted:
   assumes promised_free_le: "\<And>p1. promised_free a0 p1 \<Longrightarrow> p1 \<preceq> p0"
   assumes promised_prev_le: "\<And>p1 p2. promised_prev a0 p1 p2 \<Longrightarrow> p1 \<preceq> p0"
   assumes proposed_val: "value_accepted a0 p0 = value_proposed p0"
-  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed (%a p. (a, p) = (a0, p0) \<or> accepted a p) chosen value_promised value_proposed value_accepted"
+  shows "paxosL lt le quorum promised_free promised_prev proposed (%a p. (a, p) = (a0, p0) \<or> accepted a p) chosen value_promised value_proposed value_accepted"
 using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
-  show "\<forall>p. chosen p \<longrightarrow> (\<exists>S. quorum_learner p S \<and> (\<forall>a\<in>S. (a, p) = (a0, p0) \<or> accepted a p))"
+  show "\<forall>p. chosen p \<longrightarrow> (\<exists>S. quorum_learner quorum p S \<and> (\<forall>a\<in>S. (a, p) = (a0, p0) \<or> accepted a p))"
     (is "\<forall>p. chosen p \<longrightarrow> (\<exists>S. ?P p S)")
     by (metis chosen_quorum)
 
@@ -554,17 +588,17 @@ qed simp_all
 
 lemma (in paxosL) paxos_change_value_promised:
   assumes accepted_eq: "\<And> a p p1. promised_prev a p p1 \<Longrightarrow> value_promised a p = value_promised' a p"
-  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed accepted chosen value_promised' value_proposed value_accepted"
+  shows "paxosL lt le quorum promised_free promised_prev proposed accepted chosen value_promised' value_proposed value_accepted"
 using assms proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
   by (unfold paxosL_def paxosL_axioms_def, simp_all)
 
 lemma (in paxosL) paxos_change_value_proposed:
   assumes proposed_eq: "\<And> p. proposed p \<Longrightarrow> value_proposed p = value_proposed' p"
-  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed accepted chosen value_promised value_proposed' value_accepted"
+  shows "paxosL lt le quorum promised_free promised_prev proposed accepted chosen value_promised value_proposed' value_accepted"
 using assms proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   show "\<forall>p. proposed p \<longrightarrow>
-        (\<exists>S. quorum_proposer S
+        (\<exists>S. quorum_proposer quorum S
         \<and> (\<forall>a\<in>S. promised_free a p \<or> (\<exists>p1. promised_prev a p p1))
         \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev a1 p p1 \<longrightarrow> value_proposed' p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)))"
        (is "\<forall>p. proposed p \<longrightarrow> ?P p")
@@ -584,7 +618,7 @@ qed simp_all
 
 lemma (in paxosL) paxos_change_value_accepted:
   assumes accepted_eq: "\<And> a p. accepted a p \<Longrightarrow> value_accepted a p = value_accepted' a p"
-  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted'"
+  shows "paxosL lt le quorum promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted'"
 using assms proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
 proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
   show "\<forall>p a. accepted a p \<longrightarrow> value_accepted' a p = value_proposed p"
@@ -596,23 +630,177 @@ proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
 qed simp_all
 
 lemma (in paxosL) paxos_change_quorum_learner:
-  assumes "quorumL quorum_proposer quorum_learner'"
-  assumes "\<And>p. chosen p \<Longrightarrow> (\<exists>S. quorum_learner' p S \<and> (\<forall>a\<in>S. accepted a p))"
-  shows "paxosL lt le quorum_proposer quorum_learner' promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
+  assumes "\<And>p. chosen p \<Longrightarrow> (\<exists>S. quorum_learner quorum' p S \<and> (\<forall>a\<in>S. accepted a p))"
+  assumes "quorum_proposer quorum' = quorum_proposer quorum"
+  shows "paxosL lt le quorum' promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
 using assms proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
   by (unfold paxosL_def paxosL_axioms_def, intro conjI, simp_all)
 
 lemma (in paxosL) paxos_change_quorum_unchosen:
-  assumes "quorumL quorum_proposer quorum_learner'"
-  assumes "\<And>p. chosen p \<Longrightarrow> quorum_learner' p = quorum_learner p"
-  shows "paxosL lt le quorum_proposer quorum_learner' promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
+  assumes "\<And>p. chosen p \<Longrightarrow> quorum_learner quorum' p = quorum_learner quorum p"
+  assumes "quorum_proposer quorum' = quorum_proposer quorum"
+  shows "paxosL lt le quorum' promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
 using assms proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
   by (unfold paxosL_def paxosL_axioms_def, intro conjI, simp_all)
 
 lemma (in paxosL) paxos_change_quorum_superset:
-  assumes "quorumL quorum_proposer quorum_learner'"
-  assumes "\<And>p S. \<lbrakk> quorum_learner p S \<rbrakk> \<Longrightarrow> quorum_learner' p S"
-  shows "paxosL lt le quorum_proposer quorum_learner' promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
+  assumes "quorum_proposer quorum' = quorum_proposer quorum"
+  assumes "\<And>p S. \<lbrakk> quorum_learner quorum p S \<rbrakk> \<Longrightarrow> quorum_learner quorum' p S"
+  shows "paxosL lt le quorum' promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
 using assms chosen_quorum
   by (intro paxos_change_quorum_learner, simp, metis)
+
+locale multiPaxosL = propNoL +
+
+  fixes quorum :: "nat \<Rightarrow> ('acceptor, 'pid) quorum"
+
+  (* multi_promised i a p  is effectively promised_free j a p for all j \<ge> i *)
+  fixes multi_promised :: "nat \<Rightarrow> 'acceptor \<Rightarrow> 'pid \<Rightarrow> bool"
+
+  fixes promised_free :: "nat \<Rightarrow> 'acceptor \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes promised_prev :: "nat \<Rightarrow> 'acceptor \<Rightarrow> 'pid \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes proposed :: "nat \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes accepted :: "nat \<Rightarrow> 'acceptor \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes chosen :: "nat \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes value_promised :: "nat \<Rightarrow> 'acceptor \<Rightarrow> 'pid \<Rightarrow> 'value"
+  fixes value_proposed :: "nat \<Rightarrow> 'pid \<Rightarrow> 'value"
+  fixes value_accepted :: "nat \<Rightarrow> 'acceptor \<Rightarrow> 'pid \<Rightarrow> 'value"
+
+  assumes multi_instances: "\<And>i. paxosL lt le (quorum i)
+    (%a p. promised_free i a p \<or> (EX j. j \<le> i \<or> multi_promised j a p))
+    (promised_prev i) (proposed i) (accepted i) (chosen i)
+    (value_promised i) (value_proposed i) (value_accepted i)"
+
+theorem (in multiPaxosL)
+  assumes "chosen i p1" and "chosen i p2"
+  shows multi_paxos_consistent: "value_proposed i p1 = value_proposed i p2"
+  using assms by (intro paxosL.paxos_consistent [OF multi_instances])
+
+(* In multi, effectively have separate proposers/acceptors/learners for each instance.
+However, acceptors come from the same set and quorums will be mostly unchanged between
+consecutive instances.
+
+Need to show how quorums can change.
+
+Two-step membership change idea:
+
+1. change the learner quorums but in such a way that both the old and new quorums work with the proposer quorums
+(e.g. in a straight majority setup, adding or removing a single acceptor remains consistent)
+
+2. change the proposer quorums to match the learner quorums. *)
+
+fun isMajority :: "'a set \<Rightarrow> 'a set \<Rightarrow> bool"
+  where "isMajority A S = (finite A \<and> A \<noteq> {} \<and> finite S \<and> card A < 2 * card (S \<inter> A))"
+
+lemma
+  assumes S1: "isMajority A S1"
+  assumes S2: "isMajority (insert a A) S2"
+  shows majority_insert_intersects: "S1 \<inter> S2 \<noteq> {}"
+proof (intro notI)
+  from S1 have fS1: "finite (S1 \<inter> A)" by simp
+  from S2 have fS2: "finite (S2 \<inter> A)" by simp
+
+  assume inter: "S1 \<inter> S2 = {}"
+  hence interA: "(S1 \<inter> A) \<inter> (S2 \<inter> A) = {}" by auto
+
+  with fS1 fS2 have card_sum: "card ((S1 \<inter> A) \<union> (S2 \<inter> A)) = card (S1 \<inter> A) + card (S2 \<inter> A)"
+    by (intro card_Un_disjoint)
+  
+  have p: "\<And>(a::nat) b c d. a < c \<Longrightarrow> b \<le> d \<Longrightarrow> (a+b) < (c+d)" by simp
+
+  from assms have finA: "finite A" by simp
+  hence "card ((S1 \<inter> A) \<union> (S2 \<inter> A)) \<le> card A"
+    by (intro card_mono, auto)
+  hence "2 * card ((S1 \<inter> A) \<union> (S2 \<inter> A)) \<le> card A + card A" by simp
+
+  also have "... < 2 * card (S1 \<inter> A) + 2 * card (S2 \<inter> A)"
+  proof (intro p)
+    from S1 show "card A < 2 * card (S1 \<inter> A)" by simp
+    
+    show "card A \<le> 2 * card (S2 \<inter> A)"
+    proof (cases "a \<in> A")
+      case True 
+      hence "insert a A = A" by auto
+      with S2 show ?thesis by simp
+    next
+      case False
+      with finA have 1: "card (insert a A) = 1 + card A" by simp
+
+      from finA False
+      have 2: "card (S2 \<inter> (insert a A)) - 1 \<le> card (S2 \<inter> A)"
+        by (cases "a \<in> S2", auto)
+
+      from S2 have "card (insert a A) \<le> 2 * card (S2 \<inter> (insert a A)) - 1" by auto
+      with 1 have "card A \<le> 2 * (card (S2 \<inter> (insert a A)) - 1)" by auto
+      also from 2 have "... \<le> 2 * card (S2 \<inter> A)" by simp
+      finally show "card A \<le> ..." .
+    qed
+  qed
+
+  also have "... = 2 * (card (S1 \<inter> A) + card (S2 \<inter> A))" by simp
+
+  also from card_sum have "... = 2 * (card ((S1 \<inter> A) \<union> (S2 \<inter> A)))" by simp
+
+  finally show False by simp
+qed
+
+lemma
+  assumes nz: "A \<noteq> {}" and finA: "finite A"
+  obtains q where
+    "quorum_proposer q   = isMajority (if Q   then insert a A else A)"
+    and
+    "\<And>p. quorum_learner  q p = isMajority (if P p then insert a A else A)"
+proof -
+  from nz obtain b where "b \<in> A" by auto
+  hence b: "\<And>R. (if R then insert a A else A) = insert (if R then a else b) A"
+    by auto
+
+  def q == "Abs_quorum (isMajority (if Q   then insert a A else A),
+                    %p. isMajority (if P p then insert a A else A))"
+
+  have Rep_q: "Rep_quorum q = (isMajority (if Q   then insert a A else A),
+                    %p. isMajority (if P p then insert a A else A))"
+  proof (cases Q)
+    case False
+    hence Q: "(if Q then insert a A else A) = A" by simp
+    show ?thesis
+    proof (unfold q_def Q, intro Abs_quorum_inverse, intro CollectI, unfold Product_Type.split, intro conjI allI impI exI majority_insert_intersects)
+      from assms show "isMajority A A"
+        by (simp add: card_gt_0_iff)
+  
+      fix SP assume SP: "isMajority A SP"
+      thus "isMajority A SP" .
+      thus "finite SP" by simp
+  
+      fix p SL
+      assume SL: "isMajority (if P p then insert a A else A) SL"
+      thus "isMajority (insert (if P p then a else b) A) SL" by (unfold b)
+    qed
+  next
+    case True
+    hence Q: "(if Q then insert a A else A) = insert a A" by simp
+    show ?thesis
+    proof (unfold q_def Q, intro Abs_quorum_inverse, intro CollectI, unfold Product_Type.split, intro conjI allI impI exI)
+      from assms show "isMajority (insert a A) (insert a A)"
+        by (simp add: card_gt_0_iff)
+  
+      fix SP assume SP: "isMajority (insert a A) SP"
+      thus "finite SP" by simp
+  
+      fix p SL
+      assume SL: "isMajority (if P p then insert a A else A) SL"
+
+      have "SP \<inter> SL = SL \<inter> SP" by auto
+      also have "... \<noteq> {}"
+      proof (intro majority_insert_intersects)
+        from SL show "isMajority (if P p then insert a A else A) SL" .
+        from SP show "isMajority (insert a (if P p then insert a A else A)) SP" by auto
+      qed
+      finally show "SP \<inter> SL \<noteq> {}" .
+    qed
+  qed
+
+  show ?thesis
+  by (intro that [where q = q], simp_all add: Rep_q)
+qed
 
