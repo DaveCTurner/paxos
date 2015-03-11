@@ -72,3 +72,9 @@ The remainder of the file shows that the empty model (containing no messages) is
 3. An acceptor may accept a proposal as long as it has been proposed, and it hasn't promised to accept later proposals, and the value of `vA` agrees with the value of the proposal itself.
 4. An acceptor may freely update `vP` for any proposals for which it has not sent a promise.
 5. An acceptor may freely update `vA` for any proposals which it has not accepted.
+
+## Quorum design
+
+A simple way of picking quorums is by straight majority, which can be generalised slightly to allow different acceptors to have different weights and each quorum has a majority of weight. Weights here are natural numbers, since more general rational weights can be scaled to become natural numbers without altering the quorums.
+
+Lemma `weighted_majority_intersects` shows that any two weighted-majority sets always intersect; furthermore if the weighting function is altered by changing the weight of one acceptor by one unit then every new-weighted-majority set intersects every old-weighted-majority set too. This paves the way for a correct method for changing a weighted-majority-based quorum structure without compromising correctness.
