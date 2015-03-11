@@ -54,15 +54,15 @@ lemma (in propNoL) propNo_trans_le_le [trans]:
   shows "p1 \<preceq> p3"
   by (metis le_lt_eq p12 p23 propNo_trans_lt_le)
 
-typedef ('acceptor, 'pid) quorum
-  = "{ (quorum_proposer :: 'acceptor set \<Rightarrow> bool
-      ,quorum_learner  :: 'pid \<Rightarrow> 'acceptor set \<Rightarrow> bool
+typedef ('aid, 'pid) quorum
+  = "{ (quorum_proposer :: 'aid set \<Rightarrow> bool
+      ,quorum_learner  :: 'pid \<Rightarrow> 'aid set \<Rightarrow> bool
       ).
       (ALL SP SL p. quorum_proposer SP \<longrightarrow> quorum_learner p SL \<longrightarrow> SP \<inter> SL \<noteq> {})
       \<and> (ALL SP. quorum_proposer SP \<longrightarrow> finite SP)
       \<and> (EX SP. quorum_proposer SP)}"
 proof -
-  obtain a where "(a :: 'acceptor) = a" by simp
+  obtain a where "(a :: 'aid) = a" by simp
   def x == "((%S. finite S \<and> a \<in> S), (%(p :: 'pid) S. a \<in> S))"
   def qp == "fst x"
   def ql == "snd x"
@@ -75,15 +75,15 @@ proof -
     by (intro exI [where x = x], auto simp add: x_def)
 qed
 
-fun quorum_proposer :: "('acceptor, 'pid) quorum \<Rightarrow> 'acceptor set \<Rightarrow> bool"
+fun quorum_proposer :: "('aid, 'pid) quorum \<Rightarrow> 'aid set \<Rightarrow> bool"
   where "quorum_proposer q = (case Rep_quorum q of (qp,_) \<Rightarrow> qp)"
 
-fun quorum_learner :: "('acceptor, 'pid) quorum \<Rightarrow> 'pid \<Rightarrow> 'acceptor set \<Rightarrow> bool"
+fun quorum_learner :: "('aid, 'pid) quorum \<Rightarrow> 'pid \<Rightarrow> 'aid set \<Rightarrow> bool"
   where "quorum_learner q = (case Rep_quorum q of (_,ql) \<Rightarrow> ql)"
 
 lemma
   quorum_inter: "\<And> SP SL p. \<lbrakk> quorum_proposer quorum SP; quorum_learner quorum p SL \<rbrakk> \<Longrightarrow> SP \<inter> SL \<noteq> {}"
-  and quorum_finite [simp]: "\<And> SP. quorum_proposer quorum SP \<Longrightarrow> finite SP"
+  and quorum_finite: "\<And> SP. quorum_proposer quorum SP \<Longrightarrow> finite SP"
   and quorum_exists: "EX SP. quorum_proposer quorum SP"
 proof -
   have eq: "Rep_quorum quorum = (quorum_proposer quorum, quorum_learner quorum)"
@@ -101,33 +101,17 @@ proof -
     by auto
 qed
 
-lemma obtain_quorum:
-  assumes "\<And> SP SL p. \<lbrakk> qp SP; ql p SL \<rbrakk> \<Longrightarrow> SP \<inter> SL \<noteq> {}"
-    and "\<And> SP. qp SP \<Longrightarrow> finite SP"
-    and "EX SP. qp SP"
-  obtains q where "quorum_proposer q = qp" and "quorum_learner q = ql"
-proof (intro that)
-  have Rep_q: "Rep_quorum (Abs_quorum (qp, ql)) = (qp, ql)"
-    by (intro Abs_quorum_inverse CollectI, unfold Product_Type.split, intro conjI impI allI assms)
-  
-  thus "quorum_proposer (Abs_quorum (qp, ql)) = qp"
-    and "quorum_learner (Abs_quorum (qp, ql)) = ql" by simp_all
-qed
-
-declare quorum_proposer.simps [simp del]
-declare quorum_learner.simps [simp del]
-
 locale paxosL = propNoL +
 
-  fixes quorum :: "('acceptor, 'pid) quorum"
-  fixes promised_free :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> bool"
-  fixes promised_prev :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes quorum :: "('aid, 'pid) quorum"
+  fixes promised_free :: "'aid \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes promised_prev :: "'aid \<Rightarrow> 'pid \<Rightarrow> 'pid \<Rightarrow> bool"
   fixes proposed :: "'pid \<Rightarrow> bool"
-  fixes accepted :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes accepted :: "'aid \<Rightarrow> 'pid \<Rightarrow> bool"
   fixes chosen :: "'pid \<Rightarrow> bool"
-  fixes value_promised :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> 'value"
+  fixes value_promised :: "'aid \<Rightarrow> 'pid \<Rightarrow> 'value"
   fixes value_proposed :: "'pid \<Rightarrow> 'value"
-  fixes value_accepted :: "'acceptor \<Rightarrow> 'pid \<Rightarrow> 'value"
+  fixes value_accepted :: "'aid \<Rightarrow> 'pid \<Rightarrow> 'value"
 
   assumes proposed_quorum:
     "\<And> p . proposed p \<Longrightarrow> EX S. quorum_proposer quorum S
@@ -668,19 +652,19 @@ using assms chosen_quorum
 
 locale multiPaxosL = propNoL +
 
-  fixes quorum :: "nat \<Rightarrow> ('acceptor, 'pid) quorum"
+  fixes quorum :: "nat \<Rightarrow> ('aid, 'pid) quorum"
 
   (* multi_promised i a p  is effectively promised_free j a p for all j \<ge> i *)
-  fixes multi_promised :: "nat \<Rightarrow> 'acceptor \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes multi_promised :: "nat \<Rightarrow> 'aid \<Rightarrow> 'pid \<Rightarrow> bool"
 
-  fixes promised_free :: "nat \<Rightarrow> 'acceptor \<Rightarrow> 'pid \<Rightarrow> bool"
-  fixes promised_prev :: "nat \<Rightarrow> 'acceptor \<Rightarrow> 'pid \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes promised_free :: "nat \<Rightarrow> 'aid \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes promised_prev :: "nat \<Rightarrow> 'aid \<Rightarrow> 'pid \<Rightarrow> 'pid \<Rightarrow> bool"
   fixes proposed :: "nat \<Rightarrow> 'pid \<Rightarrow> bool"
-  fixes accepted :: "nat \<Rightarrow> 'acceptor \<Rightarrow> 'pid \<Rightarrow> bool"
+  fixes accepted :: "nat \<Rightarrow> 'aid \<Rightarrow> 'pid \<Rightarrow> bool"
   fixes chosen :: "nat \<Rightarrow> 'pid \<Rightarrow> bool"
-  fixes value_promised :: "nat \<Rightarrow> 'acceptor \<Rightarrow> 'pid \<Rightarrow> 'value"
+  fixes value_promised :: "nat \<Rightarrow> 'aid \<Rightarrow> 'pid \<Rightarrow> 'value"
   fixes value_proposed :: "nat \<Rightarrow> 'pid \<Rightarrow> 'value"
-  fixes value_accepted :: "nat \<Rightarrow> 'acceptor \<Rightarrow> 'pid \<Rightarrow> 'value"
+  fixes value_accepted :: "nat \<Rightarrow> 'aid \<Rightarrow> 'pid \<Rightarrow> 'value"
 
   assumes multi_instances: "\<And>i. paxosL lt le (quorum i)
     (%a p. promised_free i a p \<or> (EX j. j \<le> i \<or> multi_promised j a p))
@@ -705,14 +689,141 @@ Two-step membership change idea:
 
 2. change the proposer quorums to match the learner quorums. *)
 
+fun weight :: "('acc \<Rightarrow> nat) \<Rightarrow> 'acc set \<Rightarrow> nat"
+  where "weight f S = setsum f { a \<in> S. f a \<noteq> 0 }"
+
+fun isWeightedMajority :: "('acc \<Rightarrow> nat) \<Rightarrow> 'acc set \<Rightarrow> bool"
+  where "isWeightedMajority f S = (finite { a. f a \<noteq> 0 } \<and> weight f UNIV < 2 * weight f S)"
+
+lemma
+  assumes S1: "isWeightedMajority f1 S1"
+  assumes S2: "isWeightedMajority f2 S2"
+  assumes fa0: "f2 a0 = f1 a0 + 1"
+  assumes f: "\<And>a. a \<noteq> a0 \<Longrightarrow> f1 a = f2 a"
+  shows weighted_majority_intersects: "S1 \<inter> S2 \<noteq> ({} :: 'acc set)"
+proof (intro notI)
+  assume inter: "S1 \<inter> S2 = {}"
+
+  {
+    have halves_gt: "\<And>a b c::nat. c < 2 * a \<Longrightarrow> c \<le> 2 * b \<Longrightarrow> c < a + b" by linarith
+  
+    presume "weight f1 UNIV \<le> 2 * weight f1 S2"
+    with S1 have "weight f1 UNIV < weight f1 S1 + weight f1 S2"
+      by (intro halves_gt, simp_all)
+  
+    also presume "weight f1 S1 + weight f1 S2 = weight f1 (S1 \<union> S2)"
+  
+    also have "weight f1 (S1 \<union> S2) \<le> weight f1 UNIV"
+    using S1 by (unfold weight.simps, intro setsum_mono3, auto)
+  
+    finally show False by simp
+  
+  next
+    show "weight f1 S1 + weight f1 S2 = weight f1 (S1 \<union> S2)"
+    proof -
+      have "weight f1 (S1 \<union> S2) = setsum f1 {a \<in> S1 \<union> S2. f1 a \<noteq> 0}" by simp
+      also have "... = setsum f1 ({ a \<in> S1. f1 a \<noteq> 0 } \<union> { a \<in> S2. f1 a \<noteq> 0 })"
+        by (rule cong [where f = "setsum f1"], auto)
+      also have "... = weight f1 S1 + weight f1 S2" 
+      proof (unfold weight.simps, intro setsum.union_disjoint)
+        from S1 show "finite {a \<in> S1. f1 a \<noteq> 0}" and "finite {a \<in> S2. f1 a \<noteq> 0}" by auto
+        from inter show "{a \<in> S1. f1 a \<noteq> 0} \<inter> {a \<in> S2. f1 a \<noteq> 0} = {}" by auto
+      qed
+      finally show "weight f1 S1 + weight f1 S2 = weight f1 (S1 \<union> S2)" ..
+    qed
+
+  next
+    presume "weight f1 UNIV + 1 = weight f2 UNIV"
+    also from S2 have "... < 2 * weight f2 S2" by simp
+    
+    also presume "weight f2 S2 \<le> weight f1 S2 + 1"
+    hence "2 * weight f2 S2 \<le> 2 * (weight f1 S2 + 1)" by simp
+
+    finally show "weight f1 UNIV \<le> 2 * weight f1 S2" by simp
+
+  next
+    have p: "\<And>S. a0 \<notin> S \<Longrightarrow> weight f2 S = weight f1 S"
+    proof -
+      fix S
+      assume a0S: "a0 \<notin> S"
+      with f have eq: "\<And>a. a \<in> S \<Longrightarrow> f1 a = f2 a" by metis
+
+      also from eq a0S have "setsum f2 { a \<in> S. f2 a \<noteq> 0 } = setsum f1 { a \<in> S. f1 a \<noteq> 0 }"
+        by (intro setsum.cong sym [OF f] equalityI subsetI CollectI conjI, auto)
+
+      thus "?thesis S" by simp
+    qed
+
+    have q: "\<And>S. weight f2 S = weight f1 S + (if a0 \<in> S then 1 else 0)"
+    proof -
+      fix S
+  
+      show "weight f2 S = weight f1 S + (if a0 \<in> S then 1 else 0)"
+      proof (cases "a0 \<in> S")
+        case False
+        with p [OF this] show ?thesis by simp
+      next
+        case True
+        note a0S = this
+  
+        have add_cong: "\<And>a b c d :: nat. a = c \<Longrightarrow> b = d \<Longrightarrow> a + b = c + d" by linarith
+  
+        from fa0 True have "weight f2 S = setsum f2 (insert a0 { a \<in> (S - {a0}). f2 a \<noteq> 0 })"
+          by (unfold weight.simps, intro setsum.cong refl, auto)
+        also from S2 have "... = f2 a0 + setsum f2 { a \<in> (S - {a0}). f2 a \<noteq> 0 }"
+          by (intro setsum.insert, simp_all)
+        also have "... = f2 a0       + weight f2 (S - {a0})" by simp
+        also have "... = (f1 a0 + 1) + weight f1 (S - {a0})"
+          by (intro add_cong [OF fa0] p, simp)
+        also have "... = (f1 a0 + weight f1 (S - {a0})) + 1" by simp
+        also have "... = weight f1 S + (if a0 \<in> S then 1 else 0)"
+        proof (intro add_cong)
+          from True show "1 = (if a0 \<in> S then 1 else 0)" by simp
+  
+          show "f1 a0 + weight f1 (S - {a0}) = weight f1 S"
+          proof (cases "f1 a0 = 0")
+            case True
+            have "weight f1 (S - {a0}) = weight f1 S"
+              by (unfold weight.simps, metis True member_remove remove_def)
+            with True show ?thesis by simp
+          next
+            case False
+            have "f1 a0 + weight f1 (S - {a0}) = f1 a0 + setsum f1 { a \<in> S - {a0}. f1 a \<noteq> 0 }" by simp
+            also from S1 have "... = setsum f1 (insert a0 { a \<in> S - {a0}. f1 a \<noteq> 0 })"
+              by (intro sym [OF setsum.insert], simp_all)
+            also from a0S False have "... = setsum f1 { a \<in> S. f1 a \<noteq> 0 }"
+              by (intro setsum.cong refl, auto)
+            also have "... = weight f1 S" by simp
+            finally show ?thesis .
+          qed
+        qed
+        finally show ?thesis .
+      qed
+    qed
+
+    thus "weight f1 UNIV + 1 = weight f2 UNIV"
+      by (auto simp del: weight.simps)
+
+    from q show "weight f2 S2 \<le> weight f1 S2 + 1"
+      by (cases "a0 \<in> S", auto simp del: weight.simps)
+  }
+qed
+
 fun isMajority :: "'a set \<Rightarrow> 'a set \<Rightarrow> bool"
-  where "isMajority A S = (finite A \<and> A \<noteq> {} \<and> finite S \<and> card A < 2 * card (S \<inter> A))"
+  where "isMajority A = isWeightedMajority (%a. if a \<in> A then 1 else 0)"
 
 lemma
   assumes S1: "isMajority A S1"
-  assumes S2: "isMajority (insert a A) S2"
+  assumes S2: "isMajority (insert a0 A) S2"
   shows majority_insert_intersects: "S1 \<inter> S2 \<noteq> {}"
-proof (intro notI)
+proof (intro weighted_majority_intersects)
+  from S1 show "isWeightedMajority (%a. if a \<in> A then 1 else 0) S1" by simp
+  from S2 show "isWeightedMajority (%a. if a \<in> insert a0 A then 1 else 0) S2" by simp
+
+  fix a assume "a \<noteq> a0" thus "(if a \<in> A then 1 else 0) = (if a \<in> insert a0 A then 1 else 0)" by simp
+next
+
+
   from S1 have fS1: "finite (S1 \<inter> A)" by simp
   from S2 have fS2: "finite (S2 \<inter> A)" by simp
 
@@ -771,57 +882,81 @@ proof -
   hence b: "\<And>R. (if R then insert a A else A) = insert (if R then a else b) A"
     by auto
 
-  show ?thesis
+  def q == "Abs_quorum (isMajority (if Q   then insert a A else A),
+                    %p. isMajority (if P p then insert a A else A))"
+
+  have Rep_q: "Rep_quorum q = (isMajority (if Q   then insert a A else A),
+                    %p. isMajority (if P p then insert a A else A))"
   proof (cases Q)
     case False
     hence Q: "(if Q then insert a A else A) = A" by simp
-    show thesis
-    proof (rule obtain_quorum)
-      from assms False show "EX SP. isMajority (if Q then insert a A else A) SP"
-        by (intro exI [where x = A], simp add: card_gt_0_iff)
+    show ?thesis
+    proof (unfold q_def Q, intro Abs_quorum_inverse, intro CollectI, unfold Product_Type.split, intro conjI allI impI exI majority_insert_intersects)
+      from assms show "isMajority A A"
+        by (simp add: card_gt_0_iff)
   
-      fix SP assume SP: "isMajority (if Q then insert a A else A) SP"
+      fix SP assume SP: "isMajority A SP"
+      thus "isMajority A SP" .
       thus "finite SP" by simp
-
+  
       fix p SL
       assume SL: "isMajority (if P p then insert a A else A) SL"
-
-      thus "SP \<inter> SL \<noteq> {}"
-        by (intro majority_insert_intersects [OF SP], unfold Q, unfold b)
-    next
-      fix q
-      assume qp: "quorum_proposer q = isMajority (if Q then insert a A else A)"
-        and ql: "quorum_learner q = (\<lambda>p SL. isMajority (if P p then insert a A else A) SL)"
-      hence "\<And>p. quorum_learner q p = isMajority (if P p then insert a A else A)" by metis
-      thus thesis by (intro that [OF qp])
+      thus "isMajority (insert (if P p then a else b) A) SL" by (unfold b)
     qed
   next
     case True
     hence Q: "(if Q then insert a A else A) = insert a A" by simp
-    show thesis
-    proof (rule obtain_quorum)
-      from assms True show "EX SP. isMajority (if Q then insert a A else A) SP"
-        by (intro exI [where x = "insert a A"], simp add: card_gt_0_iff)
+    show ?thesis
+    proof (unfold q_def Q, intro Abs_quorum_inverse, intro CollectI, unfold Product_Type.split, intro conjI allI impI exI)
+      from assms show "isMajority (insert a A) (insert a A)"
+        by (simp add: card_gt_0_iff)
   
-      fix SP assume SP: "isMajority (if Q then insert a A else A) SP"
+      fix SP assume SP: "isMajority (insert a A) SP"
       thus "finite SP" by simp
-
+  
       fix p SL
       assume SL: "isMajority (if P p then insert a A else A) SL"
-      
+
       have "SP \<inter> SL = SL \<inter> SP" by auto
       also have "... \<noteq> {}"
-      proof (intro majority_insert_intersects [OF SL])
-        from SP show "isMajority (insert a (if P p then insert a A else A)) SP" by (auto simp add: Q)
+      proof (intro majority_insert_intersects)
+        from SL show "isMajority (if P p then insert a A else A) SL" .
+        from SP show "isMajority (insert a (if P p then insert a A else A)) SP" by auto
       qed
       finally show "SP \<inter> SL \<noteq> {}" .
-    next
-      fix q
-      assume qp: "quorum_proposer q = isMajority (if Q then insert a A else A)"
-        and ql: "quorum_learner q = (\<lambda>p SL. isMajority (if P p then insert a A else A) SL)"
-      hence "\<And>p. quorum_learner q p = isMajority (if P p then insert a A else A)" by metis
-      thus thesis by (intro that [OF qp])
     qed
   qed
+
+  show ?thesis
+  by (intro that [where q = q], simp_all add: Rep_q)
 qed
 
+datatype_new ('aid, 'pid, 'val) paxos_val
+  = OtherVal 'val
+  | LearnerInsertAcceptor 'aid
+  | LearnerDeleteAcceptor 'aid
+  | ObsoleteProposalsBefore 'pid
+
+datatype_new ('aid, 'pid, 'val) paxos_message
+  = ClockTick
+  | Prepare nat 'pid
+  | SingleFreePromise nat 'aid 'pid
+  | MultiFreePromise  nat 'aid 'pid
+  | PrevPromise nat 'aid 'pid 'pid 'val
+  | Propose nat 'pid 'val
+  | Accept nat 'aid 'pid 'val
+  | Choose nat 'val
+
+typedef  ('aid, 'pid, 'val) proposer_state
+  = "UNIV :: 
+      ( 'pid
+      * ('pid \<Rightarrow> 'pid
+      * (('aid, 'pid, ('aid, 'pid, 'val) paxos_val) paxos_message) list)
+      ) set"
+  by auto
+
+primrec proposer_state_machine
+  :: "('aid, 'pid, ('aid, 'pid, 'val) paxos_val) paxos_message
+   \<Rightarrow> ('aid, 'pid, 'val) proposer_state
+   \<Rightarrow> (('aid, 'pid, 'val) proposer_state * ('aid, 'pid, ('aid, 'pid, 'val) paxos_val) paxos_message)"
+   where "proposer_state_machine x = (SOME y. True)"
