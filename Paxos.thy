@@ -693,12 +693,13 @@ fun weight :: "('acc \<Rightarrow> nat) \<Rightarrow> 'acc set \<Rightarrow> nat
   where "weight f S = setsum f { a \<in> S. f a \<noteq> 0 }"
 
 fun isWeightedMajority :: "('acc \<Rightarrow> nat) \<Rightarrow> 'acc set \<Rightarrow> bool"
-  where "isWeightedMajority f S = (finite { a. f a \<noteq> 0 } \<and> weight f UNIV < 2 * weight f S)"
+  where "isWeightedMajority f S = (finite { a. f a \<noteq> 0 } \<and> finite S \<and> weight f UNIV < 2 * weight f S)"
 
 lemma
   assumes S1: "isWeightedMajority f1 S1"
   assumes S2: "isWeightedMajority f2 S2"
-  assumes fa0: "f2 a0 = f1 a0 + 1"
+  assumes d1: "d \<le> 1"
+  assumes fa0: "f2 a0 = f1 a0 + d"
   assumes f: "\<And>a. a \<noteq> a0 \<Longrightarrow> f1 a = f2 a"
   shows weighted_majority_intersects: "S1 \<inter> S2 \<noteq> ({} :: 'acc set)"
 proof (intro notI)
@@ -733,13 +734,13 @@ proof (intro notI)
     qed
 
   next
-    presume "weight f1 UNIV + 1 = weight f2 UNIV"
+    presume "weight f1 UNIV + d = weight f2 UNIV"
     also from S2 have "... < 2 * weight f2 S2" by simp
     
-    also presume "weight f2 S2 \<le> weight f1 S2 + 1"
-    hence "2 * weight f2 S2 \<le> 2 * (weight f1 S2 + 1)" by simp
+    also presume "weight f2 S2 \<le> weight f1 S2 + d"
+    hence "2 * weight f2 S2 \<le> 2 * (weight f1 S2 + d)" by simp
 
-    finally show "weight f1 UNIV \<le> 2 * weight f1 S2" by simp
+    finally show "weight f1 UNIV \<le> 2 * weight f1 S2" using d1 by simp
 
   next
     have p: "\<And>S. a0 \<notin> S \<Longrightarrow> weight f2 S = weight f1 S"
@@ -754,27 +755,39 @@ proof (intro notI)
       thus "?thesis S" by simp
     qed
 
-    have q: "\<And>S. weight f2 S = weight f1 S + (if a0 \<in> S then 1 else 0)"
-    proof -
+    have q: "\<And>S. weight f2 S = weight f1 S + (if a0 \<in> S then d else 0)"
+    proof (cases "d = 0")
+      case True
+      have "f2 = f1"
+      proof (intro ext)
+        fix a from f fa0 True show "f2 a = f1 a" by (cases "a = a0", auto)
+      qed
+      with True show "\<And>S. ?thesis S" by simp
+    next
+      case False
+      with d1 have d: "d = 1" by simp
+
       fix S
   
-      show "weight f2 S = weight f1 S + (if a0 \<in> S then 1 else 0)"
+      show "?thesis S"
       proof (cases "a0 \<in> S")
         case False
         with p [OF this] show ?thesis by simp
       next
         case True
         note a0S = this
+        from d fa0 have fa01: "f2 a0 = f1 a0 + 1" by simp
   
         have add_cong: "\<And>a b c d :: nat. a = c \<Longrightarrow> b = d \<Longrightarrow> a + b = c + d" by linarith
   
-        from fa0 True have "weight f2 S = setsum f2 (insert a0 { a \<in> (S - {a0}). f2 a \<noteq> 0 })"
-          by (unfold weight.simps, intro setsum.cong refl, auto)
-        also from S2 have "... = f2 a0 + setsum f2 { a \<in> (S - {a0}). f2 a \<noteq> 0 }"
+        have "weight f2 S = setsum f2 { a \<in> S. f2 a \<noteq> 0 }" by simp
+        also from fa01 True have "... = setsum f2 (insert a0 { a \<in> (S - {a0}). f2 a \<noteq> 0 })"
+          by (intro setsum.cong refl, auto)
+        also from S2 have "... = f2 a0 + setsum f2 {a \<in> (S - {a0}). f2 a \<noteq> 0}"
           by (intro setsum.insert, simp_all)
         also have "... = f2 a0       + weight f2 (S - {a0})" by simp
         also have "... = (f1 a0 + 1) + weight f1 (S - {a0})"
-          by (intro add_cong [OF fa0] p, simp)
+          by (intro add_cong [OF fa01] p, simp)
         also have "... = (f1 a0 + weight f1 (S - {a0})) + 1" by simp
         also have "... = weight f1 S + (if a0 \<in> S then 1 else 0)"
         proof (intro add_cong)
@@ -797,14 +810,15 @@ proof (intro notI)
             finally show ?thesis .
           qed
         qed
+        also from d have "... = weight f1 S + (if a0 \<in> S then d else 0)" by simp
         finally show ?thesis .
       qed
     qed
 
-    thus "weight f1 UNIV + 1 = weight f2 UNIV"
+    thus "weight f1 UNIV + d = weight f2 UNIV"
       by (auto simp del: weight.simps)
 
-    from q show "weight f2 S2 \<le> weight f1 S2 + 1"
+    from q show "weight f2 S2 \<le> weight f1 S2 + d"
       by (cases "a0 \<in> S", auto simp del: weight.simps)
   }
 qed
@@ -819,57 +833,11 @@ lemma
 proof (intro weighted_majority_intersects)
   from S1 show "isWeightedMajority (%a. if a \<in> A then 1 else 0) S1" by simp
   from S2 show "isWeightedMajority (%a. if a \<in> insert a0 A then 1 else 0) S2" by simp
-
-  fix a assume "a \<noteq> a0" thus "(if a \<in> A then 1 else 0) = (if a \<in> insert a0 A then 1 else 0)" by simp
-next
-
-
-  from S1 have fS1: "finite (S1 \<inter> A)" by simp
-  from S2 have fS2: "finite (S2 \<inter> A)" by simp
-
-  assume inter: "S1 \<inter> S2 = {}"
-  hence interA: "(S1 \<inter> A) \<inter> (S2 \<inter> A) = {}" by auto
-
-  with fS1 fS2 have card_sum: "card ((S1 \<inter> A) \<union> (S2 \<inter> A)) = card (S1 \<inter> A) + card (S2 \<inter> A)"
-    by (intro card_Un_disjoint)
-  
-  have p: "\<And>(a::nat) b c d. a < c \<Longrightarrow> b \<le> d \<Longrightarrow> (a+b) < (c+d)" by simp
-
-  from assms have finA: "finite A" by simp
-  hence "card ((S1 \<inter> A) \<union> (S2 \<inter> A)) \<le> card A"
-    by (intro card_mono, auto)
-  hence "2 * card ((S1 \<inter> A) \<union> (S2 \<inter> A)) \<le> card A + card A" by simp
-
-  also have "... < 2 * card (S1 \<inter> A) + 2 * card (S2 \<inter> A)"
-  proof (intro p)
-    from S1 show "card A < 2 * card (S1 \<inter> A)" by simp
-    
-    show "card A \<le> 2 * card (S2 \<inter> A)"
-    proof (cases "a \<in> A")
-      case True 
-      hence "insert a A = A" by auto
-      with S2 show ?thesis by simp
-    next
-      case False
-      with finA have 1: "card (insert a A) = 1 + card A" by simp
-
-      from finA False
-      have 2: "card (S2 \<inter> (insert a A)) - 1 \<le> card (S2 \<inter> A)"
-        by (cases "a \<in> S2", auto)
-
-      from S2 have "card (insert a A) \<le> 2 * card (S2 \<inter> (insert a A)) - 1" by auto
-      with 1 have "card A \<le> 2 * (card (S2 \<inter> (insert a A)) - 1)" by auto
-      also from 2 have "... \<le> 2 * card (S2 \<inter> A)" by simp
-      finally show "card A \<le> ..." .
-    qed
-  qed
-
-  also have "... = 2 * (card (S1 \<inter> A) + card (S2 \<inter> A))" by simp
-
-  also from card_sum have "... = 2 * (card ((S1 \<inter> A) \<union> (S2 \<inter> A)))" by simp
-
-  finally show False by simp
-qed
+  show "(if a0 \<in> A then 0 else 1) \<le> (1 :: nat)"
+    by (cases "a0 \<in> A", auto)
+  show "(if a0 \<in> insert a0 A then 1 else 0) = (if a0 \<in> A then 1 else 0) + (if a0 \<in> A then 0 else 1 :: nat)"
+    by (cases "a0 \<in> A", auto)
+qed auto
 
 lemma
   assumes nz: "A \<noteq> {}" and finA: "finite A"
@@ -909,7 +877,7 @@ proof -
     show ?thesis
     proof (unfold q_def Q, intro Abs_quorum_inverse, intro CollectI, unfold Product_Type.split, intro conjI allI impI exI)
       from assms show "isMajority (insert a A) (insert a A)"
-        by (simp add: card_gt_0_iff)
+        by (simp add: card_gt_0_iff, auto)
   
       fix SP assume SP: "isMajority (insert a A) SP"
       thus "finite SP" by simp
