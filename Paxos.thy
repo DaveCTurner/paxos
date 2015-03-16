@@ -189,6 +189,68 @@ proof (intro notI)
   }
 qed
 
+lemma
+  assumes eq: "\<And>a :: 'aid. f1 a * d1 = f2 a * d2"
+  assumes d1: "0 < d1" and d2: "0 < d2"
+  shows weighted_majority_mul: "isWeightedMajority f1 = isWeightedMajority f2"
+proof (intro ext iffI)
+  have p: "\<And>f1 f2 d1 d2 S. isWeightedMajority f1 S \<Longrightarrow> 0 < d1 \<Longrightarrow> 0 < (d2 :: nat) \<Longrightarrow> (\<And>a :: 'aid. f1 a * d1 = f2 a * d2) \<Longrightarrow> isWeightedMajority f2 S"
+  proof -
+    fix f1 f2 d1 d2 S
+    assume eq: "\<And>a :: 'aid. f1 a * d1 = f2 a * (d2 :: nat)"
+      and d1: "0 < d1" and d2: "0 < d2"
+
+    hence s0: "\<And> T. {a \<in> T. f2 a \<noteq> 0} = {a \<in> T. f1 a \<noteq> 0}"
+      by (metis le0 mult_is_0 not_le)
+    
+    hence s1: "{a. f2 a \<noteq> 0} = {a. f1 a \<noteq> 0}" by auto
+
+    have d2I: "\<And>n m. d2 * n < d2 * (2 * m) \<Longrightarrow> n < 2 * m"
+      by (metis nat_mult_less_cancel_disj)
+
+    have d21: "\<And>T. d2 * setsum f2 T = d1 * setsum f1 T"
+    proof -
+      fix T
+      have "d2 * setsum f2 T = setsum (%n. d2 * f2 n) T" by (simp add: setsum_right_distrib)
+      also have "... = setsum (%n. d1 * f1 n) T"
+      proof (intro setsum.cong refl)
+        fix a
+        have "d1 * f1 a = f1 a * d1" by simp
+        also note eq
+        also have "f2 a * d2 = d2 * f2 a" by simp
+        finally show "d2 * f2 a = d1 * f1 a" ..
+      qed
+      also have "... = d1 * setsum f1 T" by (simp add: setsum_right_distrib)
+      finally show "?thesis T" .
+    qed
+
+    assume w1: "isWeightedMajority f1 S"
+    show "isWeightedMajority f2 S"
+    proof (unfold isWeightedMajority.simps weight.simps s0 s1, intro conjI d2I)
+      from w1 show "finite {a. f1 a \<noteq> 0}" and "finite S" by auto
+      have "d2 * setsum f2 {a \<in> UNIV. f1 a \<noteq> 0} = d1 * setsum f1 {a \<in> UNIV. f1 a \<noteq> 0}"
+        by (simp add: d21)
+      also from w1 d1 have "... < d1 * (2 * setsum f1 {a \<in> S. f1 a \<noteq> 0})"
+        by simp
+      also have "... = 2 * (d1 * setsum f1 {a \<in> S. f1 a \<noteq> 0})" by simp
+      also from d21 have "... = 2 * (d2 * setsum f2 {a \<in> S. f1 a \<noteq> 0})" by simp
+      also have "... = d2 * (2 * setsum f2 {a \<in> S. f1 a \<noteq> 0})" by simp
+      finally show "d2 * setsum f2 {a \<in> UNIV. f1 a \<noteq> 0} < ..." .
+    qed
+  qed
+
+  fix S
+  {
+    assume "isWeightedMajority f1 S"
+    from p [OF this d1 d2 eq]
+    show "isWeightedMajority f2 S".
+  next
+    assume "isWeightedMajority f2 S"
+    from p [OF this d2 d1 sym [OF eq]]
+    show "isWeightedMajority f1 S".
+  }
+qed
+
 locale paxosL = propNoL +
 
   fixes quorum_proposer :: "'pid \<Rightarrow> 'aid set \<Rightarrow> bool"
@@ -511,12 +573,9 @@ locale multiPaxosL = propNoL +
 
   assumes quorum_inter:     "\<And>tv S1 S2. quorum      tv  S1 \<Longrightarrow> quorum tv S2 \<Longrightarrow> S1 \<inter> S2 \<noteq> {}"
   assumes quorum_inter_Suc: "\<And>tv S1 S2. quorum (Suc tv) S1 \<Longrightarrow> quorum tv S2 \<Longrightarrow> S1 \<inter> S2 \<noteq> {}"
-
-  assumes quorum_finite: "\<And>tv S. quorum tv S \<Longrightarrow> finite S"
-
-  assumes quorum_exists: "\<And>tv. EX S. quorum tv S"
-
-  assumes quorum_nonempty: "\<And>tv S. quorum tv S \<Longrightarrow> S \<noteq> {}"
+  assumes quorum_finite:    "\<And>tv S.     quorum tv S \<Longrightarrow> finite S"
+  assumes quorum_exists:    "\<And>tv. EX S. quorum tv S"
+  assumes quorum_nonempty:  "\<And>tv S.     quorum tv S \<Longrightarrow> S \<noteq> {}"
 
   assumes proposed_quorum:
     "\<And> i p . proposed i p \<Longrightarrow> EX S.
@@ -663,125 +722,221 @@ theorem (in multiPaxosL)
   using assms by (intro paxosL.paxos_consistent [OF multi_instances])
 
 lemma paxos_empty:
-  assumes propNoL: "propNoL lt le"
-  assumes no_promise: "\<And> a p p1. \<not>promised_prev a p p1"
-  assumes no_promise: "\<And> a p. \<not>promised_free a p"
-  assumes no_proposed: "\<And> p. \<not>proposed p"
-  assumes no_accepted: "\<And> a p. \<not>accepted a p"
-  assumes no_chosen: "\<And> p. \<not>chosen p"
+  assumes "propNoL lt le"
+  assumes "\<And> i a p p1. \<not>promised_prev i a p p1"
+  assumes "\<And> i a p. \<not>promised_free i a p"
+  assumes "\<And> i p. \<not>proposed i p"
+  assumes "\<And> i a p. \<not>accepted i a p"
+  assumes "\<And> i p. \<not>chosen i p"
 
-  shows "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
-using assms by (auto simp add: paxosL_def paxosL_axioms_def)
+  assumes "\<And>p1 p2. le p1 p2 \<Longrightarrow> topology_version p1 \<le> topology_version p2"
+  assumes "\<And>tv S1 S2. quorum      tv  S1 \<Longrightarrow> quorum tv S2 \<Longrightarrow> S1 \<inter> S2 \<noteq> {}"
+  assumes "\<And>tv S1 S2. quorum (Suc tv) S1 \<Longrightarrow> quorum tv S2 \<Longrightarrow> S1 \<inter> S2 \<noteq> {}"
+  assumes "\<And>tv S. quorum tv S \<Longrightarrow> finite S"
+  assumes "\<And>tv. EX S. quorum tv S"
+  assumes "\<And>tv S. quorum tv S \<Longrightarrow> S \<noteq> {}"
 
-lemma (in paxosL) paxos_propNo [simp]: "propNoL lt le"
+  shows "multiPaxosL lt le inst_le quorum topology_version instance_topology_version multi_promised promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
+using assms by (auto simp add: multiPaxosL_def multiPaxosL_axioms_def)
+
+lemma (in multiPaxosL) multiPaxos_propNo [simp]: "propNoL lt le"
 using wf trans total by (auto simp add: propNoL_def)
 
-lemma (in paxosL) paxos_add_proposal_free:
-  assumes quorum_S: "quorum_proposer quorum S"
-  assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> promised_free a p0"
-  shows "paxosL lt le quorum promised_free promised_prev (%p. p = p0 \<or> proposed p) accepted chosen value_promised value_proposed value_accepted"
+lemma (in multiPaxosL) multiPaxos_add_proposal_free:
+  assumes quorum_S: "quorum (topology_version p0) S"
+  assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> promised_free i0 a p0 \<or> (\<exists>j. j \<sqsubseteq> i0 \<and> multi_promised j a p0)"
+  assumes topo_version: "topology_version p0 \<le> instance_topology_version i0"
+  shows "multiPaxosL lt le inst_le quorum topology_version instance_topology_version multi_promised promised_free promised_prev (%i p. (i,p) = (i0,p0) \<or> proposed i p) accepted chosen value_promised value_proposed value_accepted"
 (* the proposer only needs to know about 'promised' messages to send a 'proposed' message *)
-using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
-proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
+using topology_version_mono quorum_inter quorum_inter_Suc quorum_finite quorum_exists
+  quorum_nonempty proposed_quorum proposed_topology promised_free multi_promised
+  promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value
+  chosen_quorum chosen_topology assms
+proof (unfold multiPaxosL_def multiPaxosL_axioms_def, intro conjI)
 
   from proposed_quorum
-  show "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> (\<exists>S. quorum_proposer quorum S \<and> (\<forall>a\<in>S. promised_free a p \<or> (\<exists> p1. promised_prev a p p1)) 
-    \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev a1 p p1 \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)))"
-    (is "\<forall> p. p = p0 \<or> proposed p \<longrightarrow> ?P p")
+  show "\<forall>i p. (i, p) = (i0, p0) \<or> proposed i p \<longrightarrow> (\<exists>S. quorum (topology_version p) S \<and>
+               (\<forall>a\<in>S. (promised_free i a p \<or> (\<exists>j. j \<sqsubseteq> i \<and> multi_promised j a p))
+                    \<or> (\<exists>p1. promised_prev i a p p1)) \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev i a1 p p1
+                    \<longrightarrow> value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2)))"
   proof (intro allI impI, elim disjE)
-    fix p assume pp0: "p = p0"
-    show "?P p"
+    fix i p assume ip: "(i, p) = (i0, p0)"
+    show "\<exists>S. quorum (topology_version p) S \<and>
+               (\<forall>a\<in>S. (promised_free i a p \<or> (\<exists>j. j \<sqsubseteq> i \<and> multi_promised j a p))
+                    \<or> (\<exists>p1. promised_prev i a p p1)) \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev i a1 p p1
+                      \<longrightarrow> value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2))"
     proof (intro exI [where x = S] conjI ballI allI impI)
-      from quorum_S show "quorum_proposer quorum S" .
-      fix a1 assume a1S: "a1 \<in> S"
-      with promised_S pp0 show "promised_free a1 p \<or> (\<exists>p1. promised_prev a1 p p1)" by auto
+      from ip quorum_S show "quorum (topology_version p) S" by simp
+      fix a1 assume "a1 \<in> S"
+      note a1S = promised_S [OF this]
+      
+      with ip
+      show "(promised_free i a1 p \<or> (\<exists>j. j \<sqsubseteq> i \<and> multi_promised j a1 p)) \<or> (\<exists>p1. promised_prev i a1 p p1)"
+        by simp
 
-      fix p1 assume p1: "promised_prev a1 p p1"
-      with promised_S [OF a1S] have False
-        by (metis pp0 promised_some_none)
-      thus "value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)" by simp
+      fix p1
+      assume prev: "promised_prev i a1 p p1"
+      show "value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2)"
+      proof (rule paxosL.promised_some_none [OF multi_instances prev])
+        from a1S ip show "promised_free i a1 p \<or> (\<exists>j. j \<sqsubseteq> i \<and> multi_promised j a1 p)" by simp
+      qed
     qed
+
   qed simp
 qed simp_all
 
 
-lemma (in paxosL) paxos_add_proposal_constrained:
-  assumes quorum_S: "quorum_proposer quorum S"
-  assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> promised_free a p0 \<or> (EX p1. promised_prev a p0 p1)"
-  assumes promised_S_value: "\<And>a p1. a \<in> S \<Longrightarrow> promised_prev a p0 p1 \<Longrightarrow> value_proposed p0 = value_promised a p0 \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p0 p2 \<and> p1 \<prec> p2)"
-  shows "paxosL lt le quorum promised_free promised_prev (%p. p = p0 \<or> proposed p) accepted chosen value_promised value_proposed value_accepted"
+lemma (in multiPaxosL) multiPaxos_add_proposal_constrained:
+  assumes quorum_S: "quorum (topology_version p0) S"
+  assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> promised_free i0 a p0 \<or> (\<exists>j. j \<sqsubseteq> i0 \<and> multi_promised j a p0) \<or> (EX p1. promised_prev i0 a p0 p1)"
+  assumes promised_S_value: "\<And>a p1. a \<in> S \<Longrightarrow> promised_prev i0 a p0 p1 \<Longrightarrow> value_proposed i0 p0 = value_promised i0 a p0 \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i0 a2 p0 p2 \<and> p1 \<prec> p2)"
+  assumes topo_version: "topology_version p0 \<le> instance_topology_version i0"
+  shows "multiPaxosL lt le inst_le quorum topology_version instance_topology_version multi_promised promised_free promised_prev (%i p. (i,p) = (i0,p0) \<or> proposed i p) accepted chosen value_promised value_proposed value_accepted"
 (* the Proposer only needs to know about promised messages (and 'value') to send a 'proposed' message *)
-using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
-proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
+using topology_version_mono quorum_inter quorum_inter_Suc quorum_finite quorum_exists
+  quorum_nonempty proposed_quorum proposed_topology promised_free multi_promised
+  promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value
+  chosen_quorum chosen_topology assms
+proof (unfold multiPaxosL_def multiPaxosL_axioms_def, intro conjI)
   from proposed_quorum
-  show "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> (\<exists>S. quorum_proposer quorum S 
-      \<and> (\<forall>a\<in>S. promised_free a p \<or> (\<exists>p1. promised_prev a p p1))
-      \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev a1 p p1 \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)))"
-      (is "\<forall>p. p = p0 \<or> proposed p \<longrightarrow> ?P p")
+  show " \<forall>i p. (i, p) = (i0, p0) \<or> proposed i p \<longrightarrow>
+          (\<exists>S. quorum (topology_version p) S \<and>
+               (\<forall>a\<in>S. (promised_free i a p \<or>
+                (\<exists>j. j \<sqsubseteq> i \<and> multi_promised j a p))
+                \<or> (\<exists>p1. promised_prev i a p p1)) \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev i a1 p p1
+                \<longrightarrow> value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2)))"
+      (is "\<forall>i p. (i,p) = (i0,p0) \<or> proposed i p \<longrightarrow> ?P i p")
   proof (intro allI impI, elim disjE)
-    fix p assume pp0: "p = p0"
-    show "?P p"
+    fix i p assume ip: "(i,p) = (i0,p0)"
+    show "?P i p"
     proof (intro exI [where x = S] conjI ballI allI impI)
-      from quorum_S show "quorum_proposer quorum S" .
+      from quorum_S ip show "quorum (topology_version p) S" by simp
       fix a1 assume a1S: "a1 \<in> S"
-      with promised_S pp0 show "promised_free a1 p \<or> (EX p1. promised_prev a1 p p1)" by simp
+      with promised_S ip show "(promised_free i a1 p \<or> (\<exists>j. j \<sqsubseteq> i \<and> multi_promised j a1 p)) \<or> (\<exists>p1. promised_prev i a1 p p1)" by simp
 
-      fix p1 assume p1: "promised_prev a1 p p1"
-      with pp0 have "promised_prev a1 p0 p1" by simp
-      from promised_S_value [OF a1S this]
-      show "value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)" by (simp add: pp0)
+      fix p1 assume p1: "promised_prev i a1 p p1"
+      with ip have "promised_prev i0 a1 p0 p1" by simp
+      from promised_S_value [OF a1S this] ip
+      show "value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2)" by simp
     qed
   qed simp
 qed simp_all
 
-lemma (in paxosL) paxos_add_choice:
-  assumes quorum_S: "quorum_learner quorum p0 S"
-  assumes accepted_S: "\<And>a. a \<in> S \<Longrightarrow> accepted a p0"
-  shows "paxosL lt le quorum promised_free promised_prev proposed accepted (%p. p = p0 \<or> chosen p) value_promised value_proposed value_accepted"
+lemma (in multiPaxosL) multiPaxos_add_choice:
+  assumes quorum_S: "quorum (topology_version p0) S"
+  assumes accepted_S: "\<And>a. a \<in> S \<Longrightarrow> accepted i0 a p0"
+  assumes topo_version: "instance_topology_version i0 \<le> Suc (topology_version p0)"
+  shows "multiPaxosL lt le inst_le quorum topology_version instance_topology_version multi_promised promised_free promised_prev proposed accepted (%i p. (i,p) = (i0,p0) \<or> chosen i p) value_promised value_proposed value_accepted"
 (* the Learner only needs to know about accepted messages to send a 'chosen' message. *)
-using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
-proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
-  show "\<forall>p. p = p0 \<or> chosen p \<longrightarrow> (\<exists>S. quorum_learner quorum p S \<and> (\<forall>a\<in>S. accepted a p))"
-    by (metis chosen_quorum assms)
+using topology_version_mono quorum_inter quorum_inter_Suc quorum_finite quorum_exists
+  quorum_nonempty proposed_quorum proposed_topology promised_free multi_promised
+  promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value
+  chosen_quorum chosen_topology assms
+proof (unfold multiPaxosL_def multiPaxosL_axioms_def, intro conjI)
+  show "\<forall>i p. (i,p) = (i0,p0) \<or> chosen i p \<longrightarrow> (\<exists>S. quorum (topology_version p) S \<and> (\<forall>a\<in>S. accepted i a p))"
+  by (metis accepted_S chosen_quorum fst_conv quorum_S snd_conv)
 qed simp_all
 
 (* the Acceptor only needs to know what it has previously accepted and promised
 to send promised messages *)
-lemma (in paxosL) paxos_add_promise_free:
-  assumes not_accepted: "\<And>p. \<not>accepted a0 p"
-  shows   "paxosL lt le quorum (%a p. (a, p) = (a0, p0) \<or> promised_free a p) promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
-using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
-proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
-  from assms promised_free
-  show "\<forall>a p0a p1. (a, p0a) = (a0, p0) \<or> promised_free a p0a \<longrightarrow> accepted a p1 \<longrightarrow> p0a \<preceq> p1" by simp
-
-  show "\<forall>p. proposed p \<longrightarrow> (\<exists>S. quorum_proposer quorum S
-    \<and> (\<forall>a\<in>S. ((a, p) = (a0, p0) \<or> promised_free a p) \<or> (\<exists>p1. promised_prev a p p1))
-    \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev a1 p p1 \<longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)))"
-      (is "\<forall>p. proposed p \<longrightarrow> ?P p")
+lemma (in multiPaxosL) multiPaxos_add_promise_free:
+  assumes not_accepted: "\<And>p. \<not>accepted i0 a0 p"
+  shows "multiPaxosL lt le inst_le quorum topology_version instance_topology_version multi_promised 
+  (%i a p. (i, a, p) = (i0, a0, p0) \<or> promised_free i a p)
+  promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
+using topology_version_mono quorum_inter quorum_inter_Suc quorum_finite quorum_exists
+  quorum_nonempty proposed_quorum proposed_topology promised_free multi_promised
+  promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value
+  chosen_quorum chosen_topology assms
+proof (unfold multiPaxosL_def multiPaxosL_axioms_def, intro conjI)
+  show "\<forall>i p. proposed i p \<longrightarrow>
+          (\<exists>S. quorum (topology_version p) S \<and>
+               (\<forall>a\<in>S. (((i, a, p) = (i0, a0, p0) \<or> promised_free i a p) \<or> (\<exists>j. j \<sqsubseteq> i \<and> multi_promised j a p)) \<or> (\<exists>p1. promised_prev i a p p1)) \<and>
+               (\<forall>a1\<in>S. \<forall>p1. promised_prev i a1 p p1 \<longrightarrow> value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2)))"
+      (is "\<forall>i p. proposed i p \<longrightarrow> ?P i p")
   proof (intro allI impI)
-    fix p assume proposed: "proposed p"
-    with proposed_quorum [OF this] obtain S where S_quorum: "quorum_proposer quorum S"
-      and S_accepted: "\<And>a. a \<in> S \<Longrightarrow>  promised_free a p \<or> (\<exists>p1. promised_prev a p p1)"
-      and S_consistent: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised_prev a1 p p1 \<rbrakk> \<Longrightarrow> value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)" by auto
+    fix i p assume proposed: "proposed i p"
+    from proposed_quorum [OF this] obtain S where S_quorum: "quorum (topology_version p) S"
+      and S_accepted: "\<And>a. a \<in> S \<Longrightarrow> (promised_free i a p \<or> (\<exists>j. j \<sqsubseteq> i \<and> multi_promised j a p)) \<or> (\<exists>p1. promised_prev i a p p1)"
+      and S_consistent: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised_prev i a1 p p1 \<rbrakk>
+        \<Longrightarrow> value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2)" by auto
 
     from S_quorum
-    show "?P p"
+    show "?P i p"
     proof (intro exI [where x = S] conjI ballI allI impI)
       fix a1
       assume a1S: "a1 \<in> S"
       from S_accepted [OF this]
-      show "((a1, p) = (a0, p0) \<or> promised_free a1 p) \<or> (\<exists>p1. promised_prev a1 p p1)" by auto
+      show "(((i, a1, p) = (i0, a0, p0) \<or> promised_free i a1 p) \<or> (\<exists>j. j \<sqsubseteq> i \<and> multi_promised j a1 p)) \<or> (\<exists>p1. promised_prev i a1 p p1)" by auto
 
       fix p1
-      assume promised: "promised_prev a1 p p1"
+      assume promised: "promised_prev i a1 p p1"
       from S_consistent [OF a1S promised]
-      show "value_proposed p = value_promised a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev a2 p p2 \<and> p1 \<prec> p2)"
+      show "value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2)"
         by auto
 
     qed simp
   qed
-qed auto
+qed simp_all
+
+
+(* the Acceptor only needs to know what it has previously accepted and promised
+to send promised messages *)
+lemma (in multiPaxosL) multiPaxos_add_multi_promise:
+  assumes not_accepted: "\<And>p j. i0 \<sqsubseteq> j \<Longrightarrow> \<not>accepted j a0 p"
+  shows "multiPaxosL lt le inst_le quorum topology_version instance_topology_version
+  (%i a p. (i, a, p) = (i0, a0, p0) \<or> multi_promised i a p) 
+  promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
+using topology_version_mono quorum_inter quorum_inter_Suc quorum_finite quorum_exists
+  quorum_nonempty proposed_quorum proposed_topology promised_free multi_promised
+  promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value
+  chosen_quorum chosen_topology assms
+apply (unfold multiPaxosL_def multiPaxosL_axioms_def, intro conjI)
+proof -
+  show "\<forall>i j a p0a p1. (i, a, p0a) = (i0, a0, p0) \<or> multi_promised i a p0a \<longrightarrow> accepted j a p1 \<longrightarrow> i \<sqsubseteq> j \<longrightarrow> p0a \<preceq> p1"
+  proof (intro allI impI, elim disjE)
+    fix i j a1 p1 p2
+    assume acc: "accepted j a1 p2" and ij: "i \<sqsubseteq> j"
+    {
+      assume eq: "(i, a1, p1) = (i0, a0, p0)"
+      with not_accepted ij have "\<not>accepted j a0 p2" by simp
+      with acc eq show "p1 \<preceq> p2" by simp
+    next
+      assume mp: "multi_promised i a1 p1"
+      show "p1 \<preceq> p2"
+        by (intro multi_promised [OF mp acc ij])
+    }
+  qed
+
+  show "\<forall>i p. proposed i p \<longrightarrow>
+          (\<exists>S. quorum (topology_version p) S \<and>
+               (\<forall>a\<in>S. (promised_free i a p \<or> (\<exists>j. j \<sqsubseteq> i \<and> ((j, a, p) = (i0, a0, p0) \<or> multi_promised j a p))) \<or> (\<exists>p1. promised_prev i a p p1)) \<and>
+               (\<forall>a1\<in>S. \<forall>p1. promised_prev i a1 p p1 \<longrightarrow> value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2)))"
+      (is "\<forall>i p. proposed i p \<longrightarrow> ?P i p")
+  proof (intro allI impI)
+    fix i p assume proposed: "proposed i p"
+    from proposed_quorum [OF this] obtain S where S_quorum: "quorum (topology_version p) S"
+      and S_accepted: "\<And>a. a \<in> S \<Longrightarrow> (promised_free i a p \<or> (\<exists>j. j \<sqsubseteq> i \<and> multi_promised j a p)) \<or> (\<exists>p1. promised_prev i a p p1)"
+      and S_consistent: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised_prev i a1 p p1 \<rbrakk>
+        \<Longrightarrow> value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2)" by auto
+
+    from S_quorum
+    show "?P i p"
+    proof (intro exI [where x = S] conjI ballI allI impI)
+      fix a1
+      assume a1S: "a1 \<in> S"
+      from S_accepted [OF this]
+      show "(promised_free i a1 p \<or> (\<exists>j. j \<sqsubseteq> i \<and> ((j, a1, p) = (i0, a0, p0) \<or> multi_promised j a1 p))) \<or> (\<exists>p1. promised_prev i a1 p p1)" by auto
+
+      fix p1
+      assume promised: "promised_prev i a1 p p1"
+      from S_consistent [OF a1S promised]
+      show "value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2)"
+        by auto
+
+    qed simp
+  qed
+qed simp_all
 
 lemma (in paxosL) paxos_add_promise_Some:
   assumes accepted: "accepted a0 p'0"
