@@ -1026,32 +1026,30 @@ proof -
   qed
 qed simp_all
 
-(* The Acceptor only needs to know about what it's promised and accepted previously to accept a proposal *)
-lemma (in paxosL) paxos_add_accepted:
-  assumes proposed_p0: "proposed p0"
-  assumes promised_free_le: "\<And>p1. promised_free a0 p1 \<Longrightarrow> p1 \<preceq> p0"
-  assumes promised_prev_le: "\<And>p1 p2. promised_prev a0 p1 p2 \<Longrightarrow> p1 \<preceq> p0"
-  assumes proposed_val: "value_accepted a0 p0 = value_proposed p0"
-  shows "paxosL lt le quorum promised_free promised_prev proposed (%a p. (a, p) = (a0, p0) \<or> accepted a p) chosen value_promised value_proposed value_accepted"
-using proposed_quorum promised_free promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value chosen_quorum
-proof (unfold paxosL_def paxosL_axioms_def, intro conjI)
-  show "\<forall>p. chosen p \<longrightarrow> (\<exists>S. quorum_learner quorum p S \<and> (\<forall>a\<in>S. (a, p) = (a0, p0) \<or> accepted a p))"
-    (is "\<forall>p. chosen p \<longrightarrow> (\<exists>S. ?P p S)")
-    by (metis chosen_quorum)
-
-  show "\<forall>a1 p1 p2. promised_free a1 p1 \<longrightarrow> (a1, p2) = (a0, p0) \<or> accepted a1 p2 \<longrightarrow> p1 \<preceq> p2"
-    by (metis prod.sel promised_free_le promised_free)
-
-  show "\<forall>p a. (a, p) = (a0, p0) \<or> accepted a p \<longrightarrow> proposed p"
-    by (metis accepts_proposed prod.sel(2) proposed_p0)
-
-  show "\<forall>a1 p1 p2 p3. promised_prev a1 p1 p2 \<longrightarrow> (a1, p3) = (a0, p0) \<or> accepted a1 p3 \<longrightarrow> p3 \<prec> p1 \<longrightarrow> p2 = p3 \<and> value_accepted a1 p2 = value_promised a1 p1 \<or> p3 \<prec> p2"
+(* The Acceptor only needs to know about what it's promised previously to accept a proposal *)
+lemma (in multiPaxosL) multiPaxos_add_accepted:
+  assumes proposed_p0: "proposed i0 p0"
+  assumes promised_free_le: "\<And>p1. promised_free i0 a0 p1 \<Longrightarrow> p1 \<preceq> p0"
+  assumes promised_prev_le: "\<And>p1 p2. promised_prev i0 a0 p1 p2 \<Longrightarrow> p1 \<preceq> p0"
+  assumes multi_promised_le: "\<And>j p1. multi_promised j a0 p1 \<Longrightarrow> j \<sqsubseteq> i0 \<Longrightarrow> p1 \<preceq> p0"
+  assumes proposed_val: "value_accepted i0 a0 p0 = value_proposed i0 p0"
+  shows "multiPaxosL lt le inst_le quorum topology_version instance_topology_version 
+  multi_promised promised_free promised_prev proposed
+  (%i a p. (i,a,p) = (i0, a0, p0) \<or> accepted i a p)
+  chosen value_promised value_proposed value_accepted"
+using topology_version_mono quorum_inter quorum_inter_Suc quorum_finite quorum_exists
+  quorum_nonempty proposed_quorum proposed_topology promised_free multi_promised
+  promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value
+  chosen_quorum chosen_topology assms
+apply (unfold multiPaxosL_def multiPaxosL_axioms_def, intro conjI)
+proof -
+  show "\<forall>i a p0a p1 p2. promised_prev i a p0a p1 \<longrightarrow> (i, a, p2) = (i0, a0, p0) \<or> accepted i a p2 \<longrightarrow> p2 \<prec> p0a \<longrightarrow> p1 = p2 \<and> value_accepted i a p1 = value_promised i a p0a \<or> p2 \<prec> p1"
     apply (intro allI impI, elim disjE)
-    apply (metis prod.sel(1) promised_prev_le propNo_leE propNo_lt_not_ge_E swap_simp)
+    apply (metis fst_conv promised_prev_le propNo_leE propNo_lt_not_ge_E snd_conv)
     by (metis promised_prev_max)
 
-  show "\<forall>p a. (a, p) = (a0, p0) \<or> accepted a p \<longrightarrow> value_accepted a p = value_proposed p"
-    by (metis accepts_value prod.inject proposed_val)
+  show "\<forall>i p. chosen i p \<longrightarrow> (\<exists>S. quorum (topology_version p) S \<and> (\<forall>a\<in>S. (i, a, p) = (i0, a0, p0) \<or> accepted i a p))"
+    by (metis chosen_quorum)
 qed simp_all
 
 lemma (in paxosL) paxos_change_value_promised:
