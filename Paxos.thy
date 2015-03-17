@@ -1067,14 +1067,30 @@ using topology_version_mono quorum_inter quorum_inter_Suc quorum_finite quorum_e
   promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value
   chosen_quorum chosen_topology chosen_Suc chosen_known_quorum quorums_chosen value_chosen_def
   some_chosen_def assms
-apply (unfold multiPaxosL_def multiPaxosL_axioms_def, intro conjI)
+apply unfold_locales
 proof -
-  show "\<forall>i a p0a p1 p2. promised_prev i a p0a p1 \<longrightarrow> (i, a, p2) = (i0, a0, p0) \<or> accepted i a p2 \<longrightarrow> p2 \<prec> p0a \<longrightarrow> p1 = p2 \<and> value_accepted i a p1 = value_promised i a p0a \<or> p2 \<prec> p1"
-    apply (intro allI impI, elim disjE)
-    apply (metis fst_conv promised_prev_le propNo_leE propNo_lt_not_ge_E snd_conv)
-    by (metis promised_prev_max)
-
-  show "\<forall>i p. chosen i p \<longrightarrow> (\<exists>S. quorum (topology_version p) S \<and> (\<forall>a\<in>S. (i, a, p) = (i0, a0, p0) \<or> accepted i a p))"
+  fix i a p1 p0a
+  assume a: "value_accepted i0 a0 p0 = value_proposed i0 p0" "(i, a, p1) = (i0, a0, p0) \<or> accepted i a p1"
+  {
+    assume "promised_free i a p0a"
+    with a show "p0a \<preceq> p1" by (metis prod.sel promised_free promised_free_le)
+  next
+    fix j assume "multi_promised j a p0a" "j \<le> i"
+    with a show "p0a \<preceq> p1" by (metis prod.sel multi_promised multi_promised_le)
+  next
+    fix p2 assume "promised_prev i a p0a p2" "p1 \<prec> p0a"
+    with a show "p2 = p1 \<and> value_accepted i a p2 = value_promised i a p0a \<or> p1 \<prec> p2"
+      by (metis prod.sel promised_prev_le promised_prev_max propNo_leE propNo_lt_not_ge_E)
+  }
+next
+  fix i p a
+  assume a: "value_accepted i0 a0 p0 = value_proposed i0 p0" "(i, a, p) = (i0, a0, p0) \<or> accepted i a p"
+  from a show "proposed i p" by (metis prod.sel accepts_proposed proposed_p0)
+  from a show "value_accepted i a p = value_proposed i p" by (metis prod.sel accepts_value)
+next
+  fix i p
+  assume "chosen i p"
+  thus "(\<exists>S. quorum (topology_version p) S \<and> (\<forall>a\<in>S. (i, a, p) = (i0, a0, p0) \<or> accepted i a p))"
     by (metis chosen_quorum)
 qed simp_all
 
@@ -1088,7 +1104,8 @@ using topology_version_mono quorum_inter quorum_inter_Suc quorum_finite quorum_e
   promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value
   chosen_quorum chosen_topology chosen_Suc chosen_known_quorum quorums_chosen value_chosen_def
   some_chosen_def assms
-  by (simp add: multiPaxosL_def multiPaxosL_axioms_def)
+apply unfold_locales
+  by simp_all
 
 lemma (in multiPaxosL) multiPaxos_change_value_accepted:
   assumes accepted_eq: "\<And> i a p. accepted i a p \<Longrightarrow> value_accepted i a p = value_accepted' i a p"
@@ -1100,7 +1117,8 @@ using topology_version_mono quorum_inter quorum_inter_Suc quorum_finite quorum_e
   promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value
   chosen_quorum chosen_topology chosen_Suc chosen_known_quorum quorums_chosen value_chosen_def
   some_chosen_def assms
-  by (simp add: multiPaxosL_def multiPaxosL_axioms_def)
+apply unfold_locales
+  by simp_all
 
 lemma (in multiPaxosL) multiPaxos_change_value_proposed:
   assumes proposed_eq: "\<And> i p. proposed i p \<Longrightarrow> value_proposed i p = value_proposed' i p"
@@ -1112,38 +1130,36 @@ using topology_version_mono quorum_inter quorum_inter_Suc quorum_finite quorum_e
   promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value
   chosen_quorum chosen_topology chosen_Suc chosen_known_quorum quorums_chosen value_chosen_def
   some_chosen_def assms
-apply (unfold multiPaxosL_def multiPaxosL_axioms_def, intro conjI)
+apply unfold_locales
 proof -
-  show "\<forall>i a p0 p1 p2. promised_prev i a p0 p1 \<longrightarrow> accepted i a p2 \<longrightarrow> p2 \<prec> p0 \<longrightarrow> p1 = p2 \<and> value_accepted i a p1 = value_promised i a p0 \<or> p2 \<prec> p1"
+  fix i a p0 p1 p2
+  assume "promised_prev i a p0 p1" "accepted i a p2" "p2 \<prec> p0"
+  thus "p1 = p2 \<and> value_accepted i a p1 = value_promised i a p0 \<or> p2 \<prec> p1"
     by (metis promised_prev_max)
+next
+  fix i
+  assume "EX p. chosen i p" hence c: "some_chosen i" by (auto simp add: some_chosen_def)
 
-  from quorums_chosen
-  show "\<forall>i. (\<exists>p. chosen i p) \<longrightarrow> (let chosen_quorums = concat (map (\<lambda>j. new_quorums (THE v. \<exists>p'. chosen j p' \<and> value_proposed' j p' = v)) [0..<Suc i]) in take (length chosen_quorums) quorums = chosen_quorums)"
-    (is "\<forall>i. (\<exists>p. chosen i p) \<longrightarrow> ?P i")
-  proof (intro allI impI)
-    fix i
-    assume "EX p. chosen i p" hence c: "some_chosen i" by (auto simp add: some_chosen_def)
+  have i: "\<And>A B C. (A \<Longrightarrow> B = C) \<Longrightarrow> (A \<and> B) = (A \<and> C)" by auto
+  have j: "\<And>x y z. x = y \<Longrightarrow> (x = z) = (y = z)" by auto
 
-    have i: "\<And>A B C. (A \<Longrightarrow> B = C) \<Longrightarrow> (A \<and> B) = (A \<and> C)" by auto
-    have j: "\<And>x y z. x = y \<Longrightarrow> (x = z) = (y = z)" by auto
+  have p: "map (\<lambda>j. new_quorums (THE v. \<exists>p'. chosen j p' \<and> value_proposed' j p' = v)) [0..<Suc i]
+         = map (\<lambda>j. new_quorums (THE v. \<exists>p'. chosen j p' \<and> value_proposed  j p' = v)) [0..<Suc i]"
+  proof (intro map_ext impI
+      cong [OF refl, where f = new_quorums]
+      cong [OF refl, where f = The]
+      cong [OF refl, where f = Ex]
+      ext i j sym [OF proposed_eq])
 
-    have p: "map (\<lambda>j. new_quorums (THE v. \<exists>p'. chosen j p' \<and> value_proposed' j p' = v)) [0..<Suc i]
-           = map (\<lambda>j. new_quorums (THE v. \<exists>p'. chosen j p' \<and> value_proposed  j p' = v)) [0..<Suc i]"
-    proof (intro map_ext impI
-        cong [OF refl, where f = new_quorums]
-        cong [OF refl, where f = The]
-        cong [OF refl, where f = Ex]
-        ext i j sym [OF proposed_eq])
-
-      fix j p
-      assume chosen: "chosen j p"
-      show "proposed j p"
-        by (metis accepts_proposed bot.extremum_uniqueI chosen chosen_quorum quorum_nonempty subsetI)
-    qed
-
-    from quorums_chosen [OF c]
-    show "?P i" by (unfold p value_chosen_def)
+    fix j p
+    assume chosen: "chosen j p"
+    show "proposed j p"
+      by (metis accepts_proposed bot.extremum_uniqueI chosen chosen_quorum quorum_nonempty subsetI)
   qed
+
+  from quorums_chosen [OF c]
+  show "let chosen_quorums = concat (map (\<lambda>j. new_quorums (THE v. \<exists>p'. chosen j p' \<and> value_proposed' j p' = v)) [0..<Suc i]) in take (length chosen_quorums) quorums = chosen_quorums"
+    by (unfold p value_chosen_def)
 qed simp_all
 
 lemma (in multiPaxosL) multiPaxos_add_choice:
@@ -1159,17 +1175,7 @@ using topology_version_mono quorum_inter quorum_inter_Suc quorum_finite quorum_e
   promised_prev_accepted promised_prev_prev promised_prev_max accepts_proposed accepts_value
   chosen_quorum chosen_topology chosen_Suc chosen_known_quorum quorums_chosen value_chosen_def
   some_chosen_def assms
-apply (unfold multiPaxosL_def multiPaxosL_axioms_def, intro conjI)
-apply simp
-apply simp
-apply simp
-apply simp
-apply simp
-apply simp
-apply simp
-apply simp
-apply simp
-apply simp
+apply unfold_locales
 apply simp
 apply simp
 apply simp
