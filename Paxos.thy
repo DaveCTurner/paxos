@@ -938,10 +938,10 @@ proof -
   qed
 qed simp_all
 
-lemma (in multiPaxosL) paxos_add_promise_prev:
+lemma (in multiPaxosL) multiPaxos_add_promise_prev:
   assumes accepted: "accepted i0 a0 p'0"
   assumes accepted_max: "\<And>p2. accepted i0 a0 p2 \<Longrightarrow> p2 \<preceq> p'0"
-  and promised_previous_accepts: "\<And>p2. accepted i0 a0 p2 \<Longrightarrow> p2 \<prec> p0"
+  and lt: "p'0 \<prec> p0"
   and values_eq: "value_promised i0 a0 p0 = value_accepted i0 a0 p'0"
 
   shows "multiPaxosL lt le inst_le quorum topology_version instance_topology_version multi_promised promised_free
@@ -994,6 +994,10 @@ proof -
       next
         assume "?A"
         hence eq: "i = i0" "a1 = a0" "p = p0" "p1 = p'0" by simp_all
+
+        note accepted_max
+        also note lt
+        finally have promised_previous_accepts: "\<And>p2. accepted i0 a0 p2 \<Longrightarrow> p2 \<prec> p0" .
 
         from S_promised [OF a1S]
         have "(promised_free i0 a0 p0 \<or> (\<exists>j. j \<sqsubseteq> i0 \<and> multi_promised j a0 p0)) \<or> (\<exists>p1. promised_prev i0 a0 p0 p1)"
