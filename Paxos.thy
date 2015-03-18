@@ -549,6 +549,25 @@ theorem (in paxosL)
   shows paxos_consistent: "value_proposed p0 = value_proposed p1"
   by (metis assms le_lt_eq p2 propNo_cases)
 
+lemma (in paxosL)
+  assumes "quorum_learner p0 S"
+  assumes "\<And>a. a \<in> S \<Longrightarrow> accepted a p0"
+  assumes p0_quorum_inter: "\<And> SP SL p1.
+    \<lbrakk> quorum_proposer p1 SP; quorum_learner p0 SL; proposed p1; p0 \<prec> p1 \<rbrakk>
+    \<Longrightarrow> SP \<inter> SL \<noteq> {}"
+  shows paxos_add_chosen: "paxosL lt le quorum_proposer quorum_learner promised_free promised_prev
+  proposed accepted (%p. p = p0 \<or> chosen p) value_promised value_proposed value_accepted"
+using accepts_proposed accepts_value chosen_quorum promised_free
+  promised_prev_accepted promised_prev_max promised_prev_prev 
+  proposed_quorum quorum_exists quorum_finite quorum_inter 
+  quorum_nonempty assms
+apply unfold_locales
+proof -
+  fix SP SL p0a p1
+  assume "quorum_proposer p1 SP" "quorum_learner p0a SL" "proposed p1" "p0a \<prec> p1" "p0a = p0 \<or> chosen p0a"
+  thus "SP \<inter> SL \<noteq> {}" by (metis p0_quorum_inter quorum_inter)
+qed auto
+
 locale multiPaxosL = propNoL +
 
   (* Fixed functions *)
@@ -1270,10 +1289,10 @@ next
 next
   def value_chosen' == "(\<lambda>i. THE v. \<exists>p'. ((i, p') = (i0, p0) \<or> chosen i p') \<and> value_proposed i p' = v)"
 
-  have "\<And>j. some_chosen j \<Longrightarrow> value_chosen' j = value_chosen j"
+  have value_chosen_eq: "\<And>j. some_chosen j \<Longrightarrow> value_chosen' j = value_chosen j"
   apply (unfold value_chosen'_def, intro the_equality)
   defer
-  apply (elim exE conjE disjE)
+  apply (elim disjE exE conjE)
   proof -
     fix j v p
     assume vp: "value_proposed j p = v" and c: "chosen j p"
@@ -1293,7 +1312,7 @@ next
     assume "(j,p) = (i0, p0)" hence eq: "j = i0" "p = p0" by simp_all
 
     assume "some_chosen j"
-    then obtain p' where "chosen i0 p'" by (auto simp add: some_chosen_def eq)
+    then obtain p' where c: "chosen i0 p'" by (auto simp add: some_chosen_def eq)
     from multiPaxos_the_value [OF this]
     have vc: "value_chosen i0 = value_proposed i0 p'" .
 
@@ -1302,28 +1321,85 @@ next
 
     show "v = value_chosen j"
     apply (unfold v eq vc)
-      sorry
+    apply (intro paxosL.paxos_consistent [OF paxosL.paxos_add_chosen [OF multi_instances quorum_S accepted_S]])
+    proof -
+      from c
+      show "p' = p0 \<or> chosen i0 p'" by simp
+      show "p0 = p0 \<or> chosen i0 p0" by simp
+      fix a assume "a \<in> S" thus "a \<in> S" .
+    next
+      fix SP SL p1
+      assume SP: "quorum (topology_version p1) SP"
+         and SL: "quorum (topology_version p0) SL"
+         and proposed: "proposed i0 p1"
+         and p01: "p0 \<prec> p1"
+
+      from p01 have tv01: "topology_version p0 \<le> topology_version p1" by (intro topology_version_mono, simp)
+
+      have "topology_version p1 \<le> instance_topology_version i0" by (intro proposed_topology proposed)
+      also note topo_version
+      finally have tv10: "topology_version p1 \<le> Suc (topology_version p0)" .
+
+      from tv01 tv10 have "topology_version p1 = topology_version p0 \<or> topology_version p1 = Suc (topology_version p0)" by auto
+      thus "SP \<inter> SL \<noteq> {}"
+      proof (elim disjE)
+        assume eq: "topology_version p1 = topology_version p0"
+        show ?thesis by (intro quorum_inter [OF SP], unfold eq, intro SL)
+      next
+        assume eq: "topology_version p1 = Suc (topology_version p0)"
+        show ?thesis by (intro quorum_inter_Suc [OF _ SL], fold eq, intro SP)
+      qed
+    qed
   qed
 
-  have "value_chosen' i0 = value_chosen i0"
-  apply (unfold value_chosen'_def, intro the_equality)
-  defer
-  apply (elim exE conjE disjE)
-    sorry
+  have "\<not>some_chosen i0 \<Longrightarrow> value_chosen' i0 = value_proposed i0 p0"
+  apply (unfold value_chosen'_def, intro the_equality, metis)
+    by (metis prod.sel(2) some_chosen_def)
 
   fix i
   assume "\<exists>p. (i, p) = (i0, p0) \<or> chosen i p"
-  then obtain p where "(i, p) = (i0, p0) \<or> chosen i p" by auto
+  then obtain p where ip: "(i = i0 \<and> p = p0) \<or> chosen i p" by auto
 
-  show "instance_topology_version (Suc i) < length (quorums_seq (map (\<lambda>i. THE v. \<exists>p'. ((i, p') = (i0, p0) \<or> chosen i p') \<and> value_proposed i p' = v) [0..<Suc i]))"
-  apply (fold value_chosen'_def)
-      sorry
+  {
+    presume p: "instance_topology_version (Suc i) < length (quorums_seq (map value_chosen' [0..<Suc i]))
+      \<and> (ALL tv. (tv < length (quorums_seq (map value_chosen' [0..<Suc i])))
+        \<longrightarrow> quorum tv = quorums_seq (map value_chosen' [0..<Suc i]) ! tv)"
+    
+    from p show "instance_topology_version (Suc i) < length (quorums_seq (map (\<lambda>i. THE v. \<exists>p'. ((i, p') = (i0, p0) \<or> chosen i p') \<and> value_proposed i p' = v) [0..<Suc i]))"
+      by (simp add: value_chosen'_def)
+  
+    fix tv
+    assume "tv < length (quorums_seq (map (\<lambda>i. THE v. \<exists>p'. ((i, p') = (i0, p0) \<or> chosen i p') \<and> value_proposed i p' = v) [0..<Suc i]))"
+    hence tv: "tv < length (quorums_seq (map value_chosen' [0..<Suc i]))" by (simp add: value_chosen'_def)
+    with p show "quorum tv = quorums_seq (map (\<lambda>i. THE v. \<exists>p'. ((i, p') = (i0, p0) \<or> chosen i p') \<and> value_proposed i p' = v) [0..<Suc i]) ! tv"
+      by (simp add: value_chosen'_def)
+  next
 
-  fix tv
-  assume "tv < length (quorums_seq (map (\<lambda>i. THE v. \<exists>p'. ((i, p') = (i0, p0) \<or> chosen i p') \<and> value_proposed i p' = v) [0..<Suc i]))"
-  show "quorum tv = quorums_seq (map (\<lambda>i. THE v. \<exists>p'. ((i, p') = (i0, p0) \<or> chosen i p') \<and> value_proposed i p' = v) [0..<Suc i]) ! tv"
-  apply (fold value_chosen'_def)
-    sorry
+    from ip show "instance_topology_version (Suc i) < length (quorums_seq (map value_chosen' [0..<Suc i]))
+      \<and> (ALL tv. (tv < length (quorums_seq (map value_chosen' [0..<Suc i])))
+        \<longrightarrow> quorum tv = quorums_seq (map value_chosen' [0..<Suc i]) ! tv)"
+        (is "?presumption")
+    proof (elim disjE conjE)
+      assume c: "chosen i p"
+      hence sc: "some_chosen i" by (auto simp add: some_chosen_def)
 
+      have map_eq: "map value_chosen' [0..<Suc i] = map value_chosen [0..<Suc i]"
+      proof (unfold map_eq_conv, intro ballI value_chosen_eq)
+        fix j
+        assume "j \<in> set [0..<Suc i]"
+        with sc show "some_chosen j"
+          by (cases "i = j", simp, intro chosen_le [OF sc], simp)
+      qed
+
+      show ?thesis
+      apply (unfold map_eq)
+        by (metis instance_topology_version_defined quorum_quorums_Suc quorums_chosen_def sc)
+    next
+      assume eq: "i = i0" "p = p0"
+      show ?thesis
+        sorry
+    qed
+    thus "?presumption".
+  }
 qed
 
