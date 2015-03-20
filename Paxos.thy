@@ -1429,17 +1429,21 @@ lemma (in multiPaxosL) multiPaxos_intro:
     "\<And>tv. quorum' tv = rev (quorums_seq (values_lt_list' (SOME i. tv < length (quorums_seq (values_lt_list' i))))) ! tv"
 
   assumes proposed_quorum:
-    "\<And> i p . proposed' i p \<Longrightarrow> EX S.
+    "\<And> i p . proposed' i p
+      \<Longrightarrow> \<forall>j < i. some_chosen' j
+      \<Longrightarrow> \<exists> S.
       (quorum' (prop_topology_version p) S)
-      \<and> (ALL a:S. (promised_free' i a p 
+      \<and> (\<forall> a \<in> S. (promised_free' i a p 
         \<or> (\<exists>j \<le> i. multi_promised' j a p))
-        \<or> (EX p1. promised_prev' i a p p1))
-      \<and> (ALL a1:S. ALL p1. promised_prev' i a1 p p1
+        \<or> (\<exists> p1. promised_prev' i a p p1))
+      \<and> (\<forall> a1 \<in> S. ALL p1. promised_prev' i a1 p p1
           \<longrightarrow> value_proposed' i p = value_promised' i a1 p
-          \<or> (EX a2:S. EX p2. promised_prev' i a2 p p2 \<and> p1 \<prec> p2))"
+          \<or> (\<exists> a2 \<in> S. EX p2. promised_prev' i a2 p p2 \<and> p1 \<prec> p2))"
 
   assumes proposed_topology:
-    "\<And> i p. proposed' i p \<Longrightarrow> prop_topology_version p \<le> instance_topology_version' i"
+    "\<And> i p. proposed' i p 
+      \<Longrightarrow> \<forall>j < i. some_chosen' j
+      \<Longrightarrow> prop_topology_version p \<le> instance_topology_version' i"
 
   assumes promised_free:
     "\<And> i a p0 p1. \<lbrakk> promised_free' i a p0; accepted' i a p1 \<rbrakk> \<Longrightarrow> p0 \<preceq> p1"
@@ -1461,13 +1465,10 @@ lemma (in multiPaxosL) multiPaxos_intro:
     "\<And> i p a. accepted' i a p \<Longrightarrow> value_accepted' i a p = value_proposed' i p"
 
   assumes chosen_quorum:
-    "\<And> i p. chosen' i p \<Longrightarrow> EX S. quorum' (prop_topology_version p) S \<and> (ALL a:S. accepted' i a p)"
+    "\<And> i p. chosen' i p \<Longrightarrow> EX S. S \<noteq> {} \<and> quorum' (prop_topology_version p) S \<and> (ALL a:S. accepted' i a p)"
 
   assumes chosen_topology:
     "\<And> i p. chosen' i p \<Longrightarrow> instance_topology_version' i \<le> Suc (prop_topology_version p)"
-
-  assumes chosen_proposed:
-    "\<And> i p. chosen' i p \<Longrightarrow> proposed' i p"
 
   assumes chosen_Suc: "\<And>i. some_chosen' (Suc i) \<Longrightarrow> some_chosen' i"
 
@@ -1479,7 +1480,8 @@ apply unfold_locales
 apply (fold defns)
 proof -
   fix i p
-  assume p: "proposed' i p"
+  assume p: "proposed' i p" and sc: "\<forall>j < i. some_chosen' j"
+     
   from proposed_quorum [OF this]
   obtain S where quorum_S: "quorum' (prop_topology_version p) S"
     and promised_S: "\<And>a. a \<in> S \<Longrightarrow> (promised_free' i a p \<or> (\<exists>j\<le>i. multi_promised' j a p)) \<or> (\<exists>p1. promised_prev' i a p p1)"
@@ -1496,11 +1498,12 @@ next
   assume c: "chosen' i p"
   from chosen_quorum [OF c]
   obtain S where quorum_S: "quorum' (prop_topology_version p) S"
-    and accepted_S: "\<And>a. a \<in> S \<Longrightarrow> accepted' i a p" by auto
+    and accepted_S: "\<And>a. a \<in> S \<Longrightarrow> accepted' i a p" 
+    and nz: "S \<noteq> {}" by auto
 
   from quorum_S
-  show "\<exists>S. (rev (quorums_seq (values_lt_list' (SOME i. prop_topology_version p < length (quorums_seq (values_lt_list' i))))) ! prop_topology_version p) S \<and> (\<forall>a\<in>S. accepted' i a p)"
-    by (unfold defns, intro exI [where x = S] conjI ballI accepted_S)
+  show "\<exists>S. S \<noteq> {} \<and> (rev (quorums_seq (values_lt_list' (SOME i. prop_topology_version p < length (quorums_seq (values_lt_list' i))))) ! prop_topology_version p) S \<and> (\<forall>a\<in>S. accepted' i a p)"
+    by (unfold defns, intro exI [where x = S] conjI ballI accepted_S nz)
 qed (simp_all add: defns)
 
 lemma (in multiPaxosL) multiPaxos_change_value_proposed:
