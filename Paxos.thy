@@ -1630,3 +1630,42 @@ proof -
     finally show "take (Suc tv) (rev (quorums_seq (values_lt_list' (SOME i. tv < length (quorums_seq (values_lt_list' i)))))) = take (Suc tv) (rev (quorums_seq (values_lt_list i0)))" .
   qed
 
+  show ?thesis
+  proof (intro multiPaxos_intro)
+    show "\<And>i. some_chosen' i = (\<exists>p. chosen' i p)" by (simp add: some_chosen'_def)
+    show "value_chosen' = (\<lambda>i. THE v. \<exists>p. chosen' i p \<and> value_proposed i p = v)" by (simp add: value_chosen'_def)
+    show "\<And>i. values_lt_list' i = map value_chosen' (desc_lt i)" by (simp add: values_lt_list'_def)
+    show "\<And>i. instance_topology_version' i = topology_version (values_lt_list' i)" by (simp add: instance_topology_version'_def)
+    show "\<And>tv. quorum' tv = rev (quorums_seq (values_lt_list' (SOME i. tv < length (quorums_seq (values_lt_list' i))))) ! tv"
+      by (simp add: quorum'_def)
+
+  next
+    fix i a p1
+    assume accepted: "accepted i a p1"
+    {
+      fix p0 assume "promised_free i a p0"
+      thus "p0 \<preceq> p1" by (metis promised_free accepted)
+    next
+      fix p0 j assume "multi_promised j a p0" "j \<le> i"
+      thus "p0 \<preceq> p1" by (metis multi_promised accepted)
+    next
+      fix p0 p2
+      assume "promised_prev i a p0 p2" "p1 \<prec> p0"
+      thus "p2 = p1 \<and> value_accepted i a p2 = value_promised i a p0 \<or> p1 \<prec> p2"
+        by (metis promised_prev_max accepted)
+    }
+
+  next
+    fix i a p0 p1
+    assume p: "promised_prev i a p0 p1"
+    from p show "accepted i a p1" by (metis promised_prev_accepted)
+    from p show "p1 \<prec> p0" by (metis promised_prev_prev)
+
+  next
+    fix i a p
+    assume a: "accepted i a p"
+    from a show "proposed i p" by (metis accepts_proposed)
+    from a show "value_accepted i a p = value_proposed i p" by (metis accepts_value)
+
+
+
