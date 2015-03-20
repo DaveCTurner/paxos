@@ -260,7 +260,6 @@ locale topologyL =
   assumes quorum_inter:     "\<And>vs q S1 S2. q \<in> set (quorums_seq vs) \<Longrightarrow> q S1 \<Longrightarrow> q S2 \<Longrightarrow> S1 \<inter> S2 \<noteq> {}"
   assumes quorum_inter_Suc: "\<And>vs tv S1 S2. Suc tv < length (quorums_seq vs) \<Longrightarrow> (quorums_seq vs ! tv) S1 \<Longrightarrow> (quorums_seq vs ! (Suc tv)) S2 \<Longrightarrow> S1 \<inter> S2 \<noteq> {}"
   assumes quorum_finite:    "\<And>vs q S. q \<in> set (quorums_seq vs) \<Longrightarrow> q S  \<Longrightarrow> finite S"
-(*  assumes quorum_exists:    "\<And>vs q.   q \<in> set (quorums_seq vs) \<Longrightarrow> EX S. q S"*)
   assumes quorum_nonempty:  "\<And>vs q S. q \<in> set (quorums_seq vs) \<Longrightarrow> q S  \<Longrightarrow> S \<noteq> {}"
 
   fixes topology_version_increment :: "'value \<Rightarrow> nat"
@@ -660,6 +659,18 @@ fun desc_lt :: "nat \<Rightarrow> nat list"
 
 lemma desc_lt_seq: "desc_lt n = rev [0 ..< n]" by (induct n, auto)
 
+lemma
+  assumes jk: "j \<le> k"
+  shows desc_lt_append: "desc_lt k = map (\<lambda>i. i + j) (desc_lt (k - j)) @ desc_lt j"
+proof -
+  have "map (\<lambda>i. i + j) (desc_lt (k - j)) @ desc_lt j = rev ([0..<j] @ (map (\<lambda>i. i + j) [0..<k - j]))"
+    by (simp add: desc_lt_seq rev_map)
+  also have "... = rev [0..<k]"
+    by (metis add.commute jk le0 le_add_diff_inverse map_add_upt upt_add_eq_append)
+  also have "... = desc_lt k" by (simp add: desc_lt_seq)
+  finally show "desc_lt k = map (\<lambda>i. i + j) (desc_lt (k - j)) @ desc_lt j"..
+qed
+
 locale propTvL = propNoL +
   fixes prop_topology_version          :: "'pid \<Rightarrow> nat"
   assumes prop_topology_version_mono: "\<And>p0 p1. p0 \<preceq> p1 \<Longrightarrow> prop_topology_version p0 \<le> prop_topology_version p1"
@@ -742,7 +753,7 @@ locale multiPaxosL
     "\<And> i p. chosen i p \<Longrightarrow> instance_topology_version i \<le> Suc (prop_topology_version p)"
 
   assumes chosen_proposed:
-    "\<And> i p. chosen i p \<Longrightarrow> proposed i p" (* TODO is this needed? *)
+    "\<And> i p. chosen i p \<Longrightarrow> proposed i p"
 
   assumes chosen_Suc: "\<And>i. some_chosen (Suc i) \<Longrightarrow> some_chosen i"
 
@@ -773,15 +784,9 @@ proof -
   proof (intro exI, unfold values_lt_list_def)
     fix j k :: nat
     assume jk: "j \<le> k"
+    from desc_lt_append [OF this]
     show "map value_chosen (desc_lt k) = map value_chosen (map (%i. i + j) (desc_lt (k - j))) @ map value_chosen (desc_lt j)"
-    proof (fold map_append, intro cong [OF refl, where f = "map value_chosen"])
-      have "map (\<lambda>i. i + j) (desc_lt (k - j)) @ desc_lt j = rev ([0..<j] @ (map (\<lambda>i. i + j) [0..<k - j]))"
-        by (simp add: desc_lt_seq rev_map)
-      also have "... = rev [0..<k]"
-        by (metis add.commute jk le0 le_add_diff_inverse map_add_upt upt_add_eq_append)
-      also have "... = desc_lt k" by (simp add: desc_lt_seq)
-      finally show "desc_lt k = map (\<lambda>i. i + j) (desc_lt (k - j)) @ desc_lt j"..
-    qed
+      by (fold map_append, intro cong [OF refl, where f = "map value_chosen"])
   qed
 
   show ?thesis
@@ -1004,90 +1009,6 @@ lemma paxos_empty:
 
   shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version multi_promised promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
 using assms by (unfold_locales, auto simp add: propNoL_def topologyL_def propTvL_def propTvL_axioms_def)
-
-lemma (in multiPaxosL) multiPaxos_intro:
-
-  assumes defns:
-    "\<And>i. some_chosen' i = (EX p. chosen' i p)"
-    "value_chosen' = (%i. THE v. EX p. chosen' i p \<and> value_proposed' i p = v)"
-    "\<And>i. values_lt_list' i = map value_chosen' (desc_lt i)"
-    "\<And>i. instance_topology_version' i = topology_version (values_lt_list' i)"
-    "\<And>tv. quorum' tv = rev (quorums_seq (values_lt_list' (SOME i. tv < length (quorums_seq (values_lt_list' i))))) ! tv"
-
-  assumes proposed_quorum:
-    "\<And> i p . proposed' i p \<Longrightarrow> EX S.
-      (quorum' (prop_topology_version p) S)
-      \<and> (ALL a:S. (promised_free' i a p 
-        \<or> (\<exists>j \<le> i. multi_promised' j a p))
-        \<or> (EX p1. promised_prev' i a p p1))
-      \<and> (ALL a1:S. ALL p1. promised_prev' i a1 p p1
-          \<longrightarrow> value_proposed' i p = value_promised' i a1 p
-          \<or> (EX a2:S. EX p2. promised_prev' i a2 p p2 \<and> p1 \<prec> p2))"
-
-  assumes proposed_topology:
-    "\<And> i p. proposed' i p \<Longrightarrow> prop_topology_version p \<le> instance_topology_version' i"
-
-  assumes promised_free:
-    "\<And> i a p0 p1. \<lbrakk> promised_free' i a p0; accepted' i a p1 \<rbrakk> \<Longrightarrow> p0 \<preceq> p1"
-
-  assumes multi_promised:
-    "\<And>i j a p0 p1. \<lbrakk> multi_promised' i a p0; accepted' j a p1; i \<le> j \<rbrakk> \<Longrightarrow> p0 \<preceq> p1"
-
-  assumes promised_prev_accepted:
-    "\<And> i a p0 p1. promised_prev' i a p0 p1 \<Longrightarrow> accepted' i a p1"
-  assumes promised_prev_prev:
-    "\<And> i a p0 p1. promised_prev' i a p0 p1 \<Longrightarrow> p1 \<prec> p0"
-  assumes promised_prev_max:
-    "\<And> i a p0 p1 p2. \<lbrakk> promised_prev' i a p0 p1; accepted' i a p2; p2 \<prec> p0 \<rbrakk>
-      \<Longrightarrow> ((p1 = p2 \<and> value_accepted' i a p1 = value_promised' i a p0) \<or> p2 \<prec> p1)"
-
-  assumes accepts_proposed:
-    "\<And> i p a. accepted' i a p \<Longrightarrow> proposed' i p"
-  assumes accepts_value:
-    "\<And> i p a. accepted' i a p \<Longrightarrow> value_accepted' i a p = value_proposed' i p"
-
-  assumes chosen_quorum:
-    "\<And> i p. chosen' i p \<Longrightarrow> EX S. quorum' (prop_topology_version p) S \<and> (ALL a:S. accepted' i a p)"
-
-  assumes chosen_topology:
-    "\<And> i p. chosen' i p \<Longrightarrow> instance_topology_version' i \<le> Suc (prop_topology_version p)"
-
-  assumes chosen_proposed:
-    "\<And> i p. chosen' i p \<Longrightarrow> proposed' i p"
-
-  assumes chosen_Suc: "\<And>i. some_chosen' (Suc i) \<Longrightarrow> some_chosen' i"
-
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
-  multi_promised' promised_free' promised_prev' proposed' accepted' chosen'
-  value_promised' value_proposed' value_accepted'"
-using assms
-apply unfold_locales
-apply (fold defns)
-proof -
-  fix i p
-  assume p: "proposed' i p"
-  from proposed_quorum [OF this]
-  obtain S where quorum_S: "quorum' (prop_topology_version p) S"
-    and promised_S: "\<And>a. a \<in> S \<Longrightarrow> (promised_free' i a p \<or> (\<exists>j\<le>i. multi_promised' j a p)) \<or> (\<exists>p1. promised_prev' i a p p1)"
-    and S_max: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised_prev' i a1 p p1 \<rbrakk> \<Longrightarrow> value_proposed' i p = value_promised' i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev' i a2 p p2 \<and> p1 \<prec> p2)"
-    by auto
-
-  from quorum_S
-  show "\<exists>S. (rev (quorums_seq (values_lt_list' (SOME i. prop_topology_version p < length (quorums_seq (values_lt_list' i))))) ! prop_topology_version p) S \<and>
-               (\<forall>a\<in>S. (promised_free' i a p \<or> (\<exists>j\<le>i. multi_promised' j a p)) \<or> (\<exists>p1. promised_prev' i a p p1)) \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev' i a1 p p1 \<longrightarrow> value_proposed' i p = value_promised' i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev' i a2 p p2 \<and> p1 \<prec> p2))"
-    by (unfold defns, intro exI [where x = S] conjI ballI allI impI S_max promised_S)
-
-next
-  fix i p
-  assume c: "chosen' i p"
-  from chosen_quorum [OF c]
-  obtain S where quorum_S: "quorum' (prop_topology_version p) S"
-    and accepted_S: "\<And>a. a \<in> S \<Longrightarrow> accepted' i a p" by auto
-
-  from quorum_S
-  show "\<exists>S. (rev (quorums_seq (values_lt_list' (SOME i. prop_topology_version p < length (quorums_seq (values_lt_list' i))))) ! prop_topology_version p) S \<and> (\<forall>a\<in>S. accepted' i a p)"
-    by (unfold defns, intro exI [where x = S] conjI ballI accepted_S)
-qed (simp_all add: defns)
 
 lemma (in multiPaxosL) multiPaxos_intro_simple:
 
@@ -1488,6 +1409,91 @@ using accepts_proposed accepts_value chosen_Suc chosen_quorum
 apply (intro multiPaxos_intro_simple)
   by simp_all
 
+
+lemma (in multiPaxosL) multiPaxos_intro:
+
+  assumes defns:
+    "\<And>i. some_chosen' i = (EX p. chosen' i p)"
+    "value_chosen' = (%i. THE v. EX p. chosen' i p \<and> value_proposed' i p = v)"
+    "\<And>i. values_lt_list' i = map value_chosen' (desc_lt i)"
+    "\<And>i. instance_topology_version' i = topology_version (values_lt_list' i)"
+    "\<And>tv. quorum' tv = rev (quorums_seq (values_lt_list' (SOME i. tv < length (quorums_seq (values_lt_list' i))))) ! tv"
+
+  assumes proposed_quorum:
+    "\<And> i p . proposed' i p \<Longrightarrow> EX S.
+      (quorum' (prop_topology_version p) S)
+      \<and> (ALL a:S. (promised_free' i a p 
+        \<or> (\<exists>j \<le> i. multi_promised' j a p))
+        \<or> (EX p1. promised_prev' i a p p1))
+      \<and> (ALL a1:S. ALL p1. promised_prev' i a1 p p1
+          \<longrightarrow> value_proposed' i p = value_promised' i a1 p
+          \<or> (EX a2:S. EX p2. promised_prev' i a2 p p2 \<and> p1 \<prec> p2))"
+
+  assumes proposed_topology:
+    "\<And> i p. proposed' i p \<Longrightarrow> prop_topology_version p \<le> instance_topology_version' i"
+
+  assumes promised_free:
+    "\<And> i a p0 p1. \<lbrakk> promised_free' i a p0; accepted' i a p1 \<rbrakk> \<Longrightarrow> p0 \<preceq> p1"
+
+  assumes multi_promised:
+    "\<And>i j a p0 p1. \<lbrakk> multi_promised' i a p0; accepted' j a p1; i \<le> j \<rbrakk> \<Longrightarrow> p0 \<preceq> p1"
+
+  assumes promised_prev_accepted:
+    "\<And> i a p0 p1. promised_prev' i a p0 p1 \<Longrightarrow> accepted' i a p1"
+  assumes promised_prev_prev:
+    "\<And> i a p0 p1. promised_prev' i a p0 p1 \<Longrightarrow> p1 \<prec> p0"
+  assumes promised_prev_max:
+    "\<And> i a p0 p1 p2. \<lbrakk> promised_prev' i a p0 p1; accepted' i a p2; p2 \<prec> p0 \<rbrakk>
+      \<Longrightarrow> ((p1 = p2 \<and> value_accepted' i a p1 = value_promised' i a p0) \<or> p2 \<prec> p1)"
+
+  assumes accepts_proposed:
+    "\<And> i p a. accepted' i a p \<Longrightarrow> proposed' i p"
+  assumes accepts_value:
+    "\<And> i p a. accepted' i a p \<Longrightarrow> value_accepted' i a p = value_proposed' i p"
+
+  assumes chosen_quorum:
+    "\<And> i p. chosen' i p \<Longrightarrow> EX S. quorum' (prop_topology_version p) S \<and> (ALL a:S. accepted' i a p)"
+
+  assumes chosen_topology:
+    "\<And> i p. chosen' i p \<Longrightarrow> instance_topology_version' i \<le> Suc (prop_topology_version p)"
+
+  assumes chosen_proposed:
+    "\<And> i p. chosen' i p \<Longrightarrow> proposed' i p"
+
+  assumes chosen_Suc: "\<And>i. some_chosen' (Suc i) \<Longrightarrow> some_chosen' i"
+
+  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  multi_promised' promised_free' promised_prev' proposed' accepted' chosen'
+  value_promised' value_proposed' value_accepted'"
+using assms
+apply unfold_locales
+apply (fold defns)
+proof -
+  fix i p
+  assume p: "proposed' i p"
+  from proposed_quorum [OF this]
+  obtain S where quorum_S: "quorum' (prop_topology_version p) S"
+    and promised_S: "\<And>a. a \<in> S \<Longrightarrow> (promised_free' i a p \<or> (\<exists>j\<le>i. multi_promised' j a p)) \<or> (\<exists>p1. promised_prev' i a p p1)"
+    and S_max: "\<And>a1 p1. \<lbrakk> a1 \<in> S; promised_prev' i a1 p p1 \<rbrakk> \<Longrightarrow> value_proposed' i p = value_promised' i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev' i a2 p p2 \<and> p1 \<prec> p2)"
+    by auto
+
+  from quorum_S
+  show "\<exists>S. (rev (quorums_seq (values_lt_list' (SOME i. prop_topology_version p < length (quorums_seq (values_lt_list' i))))) ! prop_topology_version p) S \<and>
+               (\<forall>a\<in>S. (promised_free' i a p \<or> (\<exists>j\<le>i. multi_promised' j a p)) \<or> (\<exists>p1. promised_prev' i a p p1)) \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev' i a1 p p1 \<longrightarrow> value_proposed' i p = value_promised' i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev' i a2 p p2 \<and> p1 \<prec> p2))"
+    by (unfold defns, intro exI [where x = S] conjI ballI allI impI S_max promised_S)
+
+next
+  fix i p
+  assume c: "chosen' i p"
+  from chosen_quorum [OF c]
+  obtain S where quorum_S: "quorum' (prop_topology_version p) S"
+    and accepted_S: "\<And>a. a \<in> S \<Longrightarrow> accepted' i a p" by auto
+
+  from quorum_S
+  show "\<exists>S. (rev (quorums_seq (values_lt_list' (SOME i. prop_topology_version p < length (quorums_seq (values_lt_list' i))))) ! prop_topology_version p) S \<and> (\<forall>a\<in>S. accepted' i a p)"
+    by (unfold defns, intro exI [where x = S] conjI ballI accepted_S)
+qed (simp_all add: defns)
+
 lemma (in multiPaxosL) multiPaxos_change_value_proposed:
   assumes proposed_eq: "\<And> i p. proposed i p \<Longrightarrow> value_proposed i p = value_proposed' i p"
   shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
@@ -1531,31 +1537,20 @@ lemma (in multiPaxosL) multiPaxos_add_choice:
   assumes accepted_S: "\<And>a. a \<in> S \<Longrightarrow> accepted i0 a p0"
   assumes topo_version: "instance_topology_version i0 \<le> Suc (prop_topology_version p0)"
   assumes chosen_pred: "\<And>i'. i0 = Suc i' \<Longrightarrow> some_chosen i'"
-  assumes known_quorum: "prop_topology_version p0 < length quorums"
 
-  fixes chosen'
-  defines chosen'_def: "chosen' == (%i p. (i,p) = (i0,p0) \<or> chosen i p)"
-
-  fixes some_chosen'
-  defines some_chosen'_def: "some_chosen' == (%i. EX p. chosen' i p)"
-
-  fixes value_chosen'
-  defines value_chosen'_def: "value_chosen' == (%i. THE v. EX p. chosen' i p \<and> value_proposed i p = v)"
-
-  fixes values_lt_list'
-  defines values_lt_list'_def: "values_lt_list' == (%i. map value_chosen' (desc_lt i))"
-
-  fixes instance_topology_version'
-  defines instance_topology_version'_def: "instance_topology_version' == (%i. topology_version (values_lt_list' i))"
-
-  fixes quorum'
-  defines quorum'_def: "quorum' == (%tv. rev (quorums_seq (values_lt_list' (SOME i. tv < length (quorums_seq (values_lt_list' i))))) ! tv)"
+  defines chosen'_def: "chosen' == (%i p. (i,p) = (i0,p0) \<or> chosen i p)" 
 
   shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
   multi_promised promised_free promised_prev proposed accepted chosen'
   value_promised value_proposed value_accepted"
 
 proof -
+  def some_chosen' == "(%i. EX p. chosen' i p)"
+  def value_chosen' == "(%i. THE v. EX p. chosen' i p \<and> value_proposed i p = v)"
+  def values_lt_list' == "(%i. map value_chosen' (desc_lt i))"
+  def instance_topology_version' == "(%i. topology_version (values_lt_list' i))"
+  def quorum' == "(%tv. rev (quorums_seq (values_lt_list' (SOME i. tv < length (quorums_seq (values_lt_list' i))))) ! tv)"
+
   have value_chosen_eq: "\<And>i. i < i0 \<Longrightarrow> value_chosen' i = value_chosen i"
     by (auto simp add: value_chosen_def value_chosen'_def chosen'_def)
 
@@ -1565,52 +1560,73 @@ proof -
   hence instance_topology_version_eq: "\<And>i. i \<le> i0 \<Longrightarrow> instance_topology_version' i = instance_topology_version i"
     by (simp add: instance_topology_version'_def instance_topology_version_def)
 
+  have values_lt_list_append: "\<And>i j. i \<le> j \<Longrightarrow> EX vs. values_lt_list j = vs @ values_lt_list i"
+  proof -
+    fix i j :: nat assume ij: "i \<le> j"
+    show "?thesis i j"  by (unfold values_lt_list_def desc_lt_append [OF ij], auto)
+  qed
+
+  have values_lt_list'_append: "\<And>i j. i \<le> j \<Longrightarrow> EX vs. values_lt_list' j = vs @ values_lt_list' i"
+  proof -
+    fix i j :: nat assume ij: "i \<le> j"
+    show "?thesis i j"  by (unfold values_lt_list'_def desc_lt_append [OF ij], auto)
+  qed
+
   note quorum_topology_version
   have "\<And>tv. tv \<le> instance_topology_version i0 \<Longrightarrow> quorum' tv = quorum tv"
-  proof (unfold quorum_topology_version)
+  apply (unfold quorum_topology_version quorum'_def)
+  apply (intro take_mem_eq)
+  proof -
+    fix tv
+    assume le: "tv \<le> instance_topology_version i0"
+
+    have tv_lt_len: "tv < length (quorums_seq (values_lt_list' i0))"
+    proof -
+      note le
+      also have "... = topology_version (values_lt_list i0)" by (simp add: instance_topology_version_def)
+      also note topology_version_lt
+      also have "length (quorums_seq (values_lt_list i0)) = length (quorums_seq (values_lt_list' i0))"
+        by (intro cong [OF refl, where f = length]
+                   cong [OF refl, where f = quorums_seq]
+                   sym  [OF values_lt_list_eq], simp)
+      finally show "tv < ..." .
+    qed
+
+    obtain vs where vs: "values_lt_list i0 = vs @ values_lt_list (LEAST i. tv < length (quorums_seq (values_lt_list' i)))"
+     by (metis values_lt_list_append Least_le tv_lt_len)
+
+    obtain vs' where vs': "values_lt_list' (SOME  i. tv < length (quorums_seq (values_lt_list' i)))
+                   = vs' @ values_lt_list' (LEAST i. tv < length (quorums_seq (values_lt_list' i)))"
+      by (metis values_lt_list'_append Least_le someI tv_lt_len)
 
 
-proof (cases "some_chosen i0")
-  case True
+    have least_eqI: "\<And>P Q (i_example :: nat). P i_example \<Longrightarrow> Q i_example \<Longrightarrow> (\<And>j. j \<le> i_example \<Longrightarrow> P j = Q j) \<Longrightarrow> Least P = Least Q"
+      by (metis LeastI_ex Least_le le_antisym)
 
-  have "paxosL lt le
-    (%p S. quorum' (prop_topology_version p) S \<and> prop_topology_version p \<le> instance_topology_version' i0)
-    (%p S. quorum' (prop_topology_version p) S \<and> prop_topology_version p \<le> instance_topology_version' i0)
-    (%a p. promised_free i0 a p \<or> (EX j. j \<le> i0 \<and> multi_promised j a p))
-    (promised_prev i0) (proposed i0) (accepted i0) (chosen' i0)
-    (value_promised i0) (value_proposed i0) (value_accepted i0)"
-  proof (unfold_locales)
-  
-  from True have some_chosen_eq: "some_chosen' = some_chosen"
-    by (auto simp add: some_chosen_def some_chosen'_def chosen'_def)
+    from tv_lt_len values_lt_list_eq
+    have least_eq: "(LEAST i. tv < length (quorums_seq (values_lt_list i))) = (LEAST i. tv < length (quorums_seq (values_lt_list' i)))"
+      by (intro least_eqI, auto)
 
-  have value_chosen_eq: "value_chosen' = value_chosen"
-  proof (intro ext)
-    have vp_eq: "\<And>p. chosen i0 p \<Longrightarrow> value_proposed i0 p = value_proposed i0 p0" sorry
+    have "take (Suc tv) (rev (quorums_seq       (values_lt_list' (SOME  i. tv < length (quorums_seq (values_lt_list' i))))))
+        = take (Suc tv) (rev (quorums_seq (vs' @ values_lt_list' (LEAST i. tv < length (quorums_seq (values_lt_list' i))))))"
+      by (simp add: vs')
+    also have "... = take (Suc tv) (rev (quorums_seq (values_lt_list' (LEAST i. tv < length (quorums_seq (values_lt_list' i))))))"
+      by (intro sym [OF take_quorums_seq_append] Suc_leI, metis LeastI tv_lt_len)
+    also have "... = take (Suc tv) (rev (quorums_seq (values_lt_list (LEAST i. tv < length (quorums_seq (values_lt_list i))))))"
+      by (unfold least_eq, intro cong [OF refl, where f = "take (Suc tv)"]
+                 cong [OF refl, where f = rev]
+                 cong [OF refl, where f = quorums_seq]
+                 values_lt_list_eq Least_le tv_lt_len)
+    also have "... = take (Suc tv) (rev (quorums_seq (vs @ values_lt_list (LEAST i. tv < length (quorums_seq (values_lt_list i))))))"
+    proof (intro take_quorums_seq_append Suc_leI LeastI)
+      note tv_lt_len
+      also from values_lt_list_eq have "length (quorums_seq (values_lt_list' i0)) = length (quorums_seq (values_lt_list i0))" by auto
+      finally show "tv < ..." .
+    qed
+    also have "... = take (Suc tv) (rev (quorums_seq (vs @ values_lt_list (LEAST i. tv < length (quorums_seq (values_lt_list' i))))))"
+      by (simp add: least_eq)
+    also have "... = take (Suc tv) (rev (quorums_seq (values_lt_list i0)))" by (simp add: vs)
+    
+    finally show "take (Suc tv) (rev (quorums_seq (values_lt_list' (SOME i. tv < length (quorums_seq (values_lt_list' i)))))) = take (Suc tv) (rev (quorums_seq (values_lt_list i0)))" .
+  qed
 
-    have "value_chosen' i0 = value_chosen i0"
-    proof (unfold value_chosen_def value_chosen'_def chosen'_def)
-    sledgehammer
-       
-    fix i
-    show "value_chosen' i = value_chosen i"
-    proof (cases "i = i0")
-      case False thus ?thesis
-        by (auto simp add: value_chosen_def value_chosen'_def chosen'_def)
-    next
-      case True
-      
-
-sledgehammer
-
-apply (intro multiPaxos_intro)
-proof -
-  fix i
-  show "some_chosen' i = (EX p. chosen' i p)" by (simp add: some_chosen'_def)
-  show "value_chosen' = (%i. THE v. EX p. chosen' i p \<and> value_proposed i p = v)" by (simp add: value_chosen'_def)
-  show "values_lt_list' i = map value_chosen' (desc_lt i)" by (simp add: values_lt_list'_def)
-  show "instance_topology_version' i = topology_version (values_lt_list' i)" by (simp add: instance_topology_version'_def)
-  show "quorum' i = rev (quorums_seq (values_lt_list' (SOME j. i < length (quorums_seq (values_lt_list' j))))) ! i" by (simp add: quorum'_def)
-next
-  fix i p
-  assume proposed: "proposed i p"
