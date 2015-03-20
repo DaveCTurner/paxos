@@ -1534,6 +1534,7 @@ qed
 lemma (in multiPaxosL) multiPaxos_add_choice:
   assumes quorum_S: "quorum (prop_topology_version p0) S"
   assumes accepted_S: "\<And>a. a \<in> S \<Longrightarrow> accepted i0 a p0"
+  assumes nonempty_S: "S \<noteq> {}"
   assumes topo_version: "instance_topology_version i0 \<le> Suc (prop_topology_version p0)"
   assumes chosen_pred: "i0 > 0 \<Longrightarrow> some_chosen (i0 - 1)"
 
@@ -1643,4 +1644,56 @@ proof -
     assume "accepted i a p"
     from accepts_value [OF this] show "value_accepted i a p = value_proposed i p" .
 
+  next
+    fix i
+    assume sc_Suc: "some_chosen' (Suc i)"
+    then obtain p where "(Suc i, p) = (i0, p0) \<or> chosen (Suc i) p"
+      by (auto simp add: some_chosen'_def chosen'_def)
+      
+    hence "some_chosen i"
+    proof (elim disjE)
+      assume "chosen (Suc i) p"
+      with chosen_Suc show "some_chosen i" by (auto simp add: some_chosen_def)
+    next
+      assume ip: "(Suc i, p) = (i0, p0)" hence eq: "i = i0 - 1" by auto
+      from ip show "some_chosen i" by (unfold eq, intro chosen_pred, auto)
+    qed
+    thus "some_chosen' i" by (auto simp add: some_chosen_def some_chosen'_def chosen'_def)
+
+  next
+    fix i p
+    assume chosen': "chosen' i p"
+
+    from chosen' obtain a where "accepted i a p"
+    proof (unfold chosen'_def, elim disjE)
+      assume "chosen i p"
+      from chosen_quorum [OF this]
+      obtain a where "accepted i a p" by auto
+      thus thesis by (intro that)
+    next
+      assume "(i, p) = (i0, p0)"
+      with nonempty_S accepted_S obtain a where "accepted i a p" by auto
+      thus thesis by (intro that)
+    qed
+    hence proposed: "proposed i p" by (intro accepts_proposed)
+
+    from chosen' have "\<forall>j<i. some_chosen j"
+    proof (unfold chosen'_def, intro allI impI, elim disjE)
+      fix j
+      assume "chosen i p" hence sc: "some_chosen i" by (auto simp add: some_chosen_def)
+      assume ji: "j < i"
+      from chosen_le [OF sc ji] show "some_chosen j" by (auto simp add: some_chosen_def)
+    next
+      fix j
+      assume ip: "(i,p) = (i0,p0)" and ji: "j < i"
+      from ji ip have i0: "0 < i0" by auto
+      with ji ip have "j = i0 - 1 \<or> j < i0 - 1" by auto
+      with chosen_pred [OF i0] show "some_chosen j"
+      proof (elim disjE)
+        assume "j < i0 - 1"
+        from chosen_le [OF chosen_pred [OF i0] this] show ?thesis .
+      qed simp
+    qed
+    hence all_some_chosen': "\<forall>j<i. some_chosen' j"
+      by (auto simp add: some_chosen_def some_chosen'_def chosen'_def)
 
