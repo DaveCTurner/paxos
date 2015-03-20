@@ -338,6 +338,15 @@ lemma (in topologyL) quorums_seq_nonempty:
 using quorums_seq_nil quorums_seq_cons 
   by (induct vs, simp, metis Nil_is_append_conv)
 
+lemma (in topologyL) topology_version_mono:
+  "topology_version vs0 \<le> topology_version (vs1 @ vs0)"
+proof (induct vs1)
+  case (Cons v vs1)
+  note Cons.hyps
+  also have "topology_version (vs1 @ vs0) \<le> topology_version ((v # vs1) @ vs0)" by (simp add: Let_def)
+  finally show ?case .
+qed simp
+
 locale paxosL = propNoL +
 
   fixes quorum_proposer :: "'pid \<Rightarrow> 'aid set \<Rightarrow> bool"
@@ -1572,8 +1581,7 @@ proof -
     show "?thesis i j"  by (unfold values_lt_list'_def desc_lt_append [OF ij], auto)
   qed
 
-  note quorum_topology_version
-  have "\<And>tv. tv \<le> instance_topology_version i0 \<Longrightarrow> quorum' tv = quorum tv"
+  have quorum_eq: "\<And>tv. tv \<le> instance_topology_version i0 \<Longrightarrow> quorum' tv = quorum tv"
   apply (unfold quorum_topology_version quorum'_def)
   apply (intro take_mem_eq)
   proof -
@@ -1630,21 +1638,17 @@ proof -
     finally show "take (Suc tv) (rev (quorums_seq (values_lt_list' (SOME i. tv < length (quorums_seq (values_lt_list' i)))))) = take (Suc tv) (rev (quorums_seq (values_lt_list i0)))" .
   qed
 
-  show ?thesis
-  proof (intro multiPaxos_intro)
-    show "\<And>i. some_chosen' i = (\<exists>p. chosen' i p)" by (simp add: some_chosen'_def)
-    show "value_chosen' = (\<lambda>i. THE v. \<exists>p. chosen' i p \<and> value_proposed i p = v)" by (simp add: value_chosen'_def)
-    show "\<And>i. values_lt_list' i = map value_chosen' (desc_lt i)" by (simp add: values_lt_list'_def)
-    show "\<And>i. instance_topology_version' i = topology_version (values_lt_list' i)" by (simp add: instance_topology_version'_def)
-    show "\<And>tv. quorum' tv = rev (quorums_seq (values_lt_list' (SOME i. tv < length (quorums_seq (values_lt_list' i))))) ! tv"
-      by (simp add: quorum'_def)
+  have defns: "\<And>i. some_chosen' i = (\<exists>p. chosen' i p)" 
+    "value_chosen' = (\<lambda>i. THE v. \<exists>p. chosen' i p \<and> value_proposed i p = v)"
+    "\<And>i. values_lt_list' i = map value_chosen' (desc_lt i)" 
+    "\<And>i. instance_topology_version' i = topology_version (values_lt_list' i)" 
+    "\<And>tv. quorum' tv = rev (quorums_seq (values_lt_list' (SOME i. tv < length (quorums_seq (values_lt_list' i))))) ! tv"
+      by (simp_all  add: quorum'_def value_chosen'_def instance_topology_version'_def some_chosen'_def values_lt_list'_def)
 
-  next
-    fix i a p
-    assume "accepted i a p"
-    from accepts_value [OF this] show "value_accepted i a p = value_proposed i p" .
+  have va: "\<And>i p a. accepted i a p \<Longrightarrow> value_accepted i a p = value_proposed i p" by (intro accepts_value)
 
-  next
+  have sc: "\<And>i. some_chosen' (Suc i) \<Longrightarrow> some_chosen' i"
+  proof -
     fix i
     assume sc_Suc: "some_chosen' (Suc i)"
     then obtain p where "(Suc i, p) = (i0, p0) \<or> chosen (Suc i) p"
@@ -1659,8 +1663,32 @@ proof -
       from ip show "some_chosen i" by (unfold eq, intro chosen_pred, auto)
     qed
     thus "some_chosen' i" by (auto simp add: some_chosen_def some_chosen'_def chosen'_def)
+  qed
 
-  next
+  {
+    assume chosen_quorum: "\<And>i p. chosen i p \<Longrightarrow> \<exists>S. S \<noteq> {} \<and> quorum' (prop_topology_version p) S \<and> (\<forall>a\<in>S. accepted i a p)"
+       and chosen_topology: "\<And>i p. chosen i p \<Longrightarrow> instance_topology_version' i \<le> Suc (prop_topology_version p)"
+       and quorum_i0: "quorum' (prop_topology_version p0) S"
+       and topology_i0: "instance_topology_version' i0 \<le> Suc (prop_topology_version p0)"
+    
+    assume "\<And>i p. proposed i p \<Longrightarrow>
+           \<forall>j<i. some_chosen' j \<Longrightarrow>
+           \<exists>S. quorum' (prop_topology_version p) S \<and>
+               (\<forall>a\<in>S. (promised_free i a p \<or> (\<exists>j\<le>i. multi_promised j a p)) \<or> (\<exists>p1. promised_prev i a p p1)) \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev i a1 p p1 \<longrightarrow> value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2))"
+           "\<And>i p. proposed i p \<Longrightarrow> \<forall>j<i. some_chosen' j \<Longrightarrow> prop_topology_version p \<le> instance_topology_version' i"
+    hence ?thesis
+    proof (intro multiPaxos_intro [OF defns _ _ va _ _ sc])
+      fix i p
+      assume c: "chosen' i p"
+      from c chosen_quorum quorum_i0 nonempty_S accepted_S show "\<exists>S. S \<noteq> {} \<and> quorum' (prop_topology_version p) S \<and> (\<forall>a\<in>S. accepted i a p)" by (auto simp add: chosen'_def)
+      from c chosen_topology topology_i0 show "instance_topology_version' i \<le> Suc (prop_topology_version p)" by (auto simp add: chosen'_def)
+    qed
+  }
+  note fast_intro = this      
+
+  have chosen'_proposed: "\<And>i p. chosen' i p \<Longrightarrow> proposed i p"
+      and chosen'_chosen_lt: "\<And>i p. chosen' i p \<Longrightarrow> \<forall>j<i. some_chosen j"
+  proof -
     fix i p
     assume chosen': "chosen' i p"
 
@@ -1675,9 +1703,9 @@ proof -
       with nonempty_S accepted_S obtain a where "accepted i a p" by auto
       thus thesis by (intro that)
     qed
-    hence proposed: "proposed i p" by (intro accepts_proposed)
+    thus proposed: "proposed i p" by (intro accepts_proposed)
 
-    from chosen' have "\<forall>j<i. some_chosen j"
+    from chosen' show all_some_chosen: "\<forall>j<i. some_chosen j"
     proof (unfold chosen'_def, intro allI impI, elim disjE)
       fix j
       assume "chosen i p" hence sc: "some_chosen i" by (auto simp add: some_chosen_def)
@@ -1694,6 +1722,278 @@ proof -
         from chosen_le [OF chosen_pred [OF i0] this] show ?thesis .
       qed simp
     qed
-    hence all_some_chosen': "\<forall>j<i. some_chosen' j"
-      by (auto simp add: some_chosen_def some_chosen'_def chosen'_def)
+  qed
 
+  have all_some_chosen: "\<forall>j<i0. some_chosen j"
+    by (metis Suc_inject Suc_pred' chosen_le chosen_pred comm_monoid_diff_class.diff_cancel gr0_implies_Suc less_imp_diff_less less_trans_Suc not_less_iff_gr_or_eq)
+
+  {
+    from accepted_S nonempty_S obtain a where "accepted i0 a p0" by auto
+    from proposed_topology [OF accepts_proposed [OF this] all_some_chosen]
+    have "prop_topology_version p0 \<le> instance_topology_version i0" .
+  }
+  note prop_le = this
+
+  show ?thesis
+  proof (cases "some_chosen i0")
+    case True
+
+    have chosen'_unfolding: "chosen' i0 = (%p. p = p0 \<or> chosen i0 p)" by (simp add: chosen'_def)
+    
+    have paxos_i0: "paxosL lt le
+      (%p S. quorum (prop_topology_version p) S \<and> prop_topology_version p \<le> instance_topology_version i0)
+      (%p S. quorum (prop_topology_version p) S \<and> prop_topology_version p \<le> instance_topology_version i0)
+      (%a p. promised_free i0 a p \<or> (EX j. j \<le> i0 \<and> multi_promised j a p))
+      (promised_prev i0) (proposed i0) (accepted i0) (chosen' i0)
+      (value_promised i0) (value_proposed i0) (value_accepted i0)"
+    proof (unfold chosen'_unfolding, intro paxosL.paxos_add_chosen multi_instances True conjI prop_le)
+      from quorum_S show "quorum (prop_topology_version p0) S".
+      from accepted_S show "\<And>a. a \<in> S \<Longrightarrow> accepted i0 a p0" .
+
+      fix SP SL p1
+      assume "quorum (prop_topology_version p1) SP \<and> prop_topology_version p1 \<le> instance_topology_version i0"
+             "quorum (prop_topology_version p0) SL \<and> prop_topology_version p0 \<le> instance_topology_version i0"
+      hence qSP: "quorum (prop_topology_version p1) SP" and qSL: "quorum (prop_topology_version p0) SL"
+        and p1: "prop_topology_version p1 \<le> instance_topology_version i0" by simp_all
+
+      assume proposed: "proposed i0 p1" and p01: "p0 \<prec> p1"
+      from p01 have ptv01: "prop_topology_version p0 \<le> prop_topology_version p1" by (intro prop_topology_version_mono, auto)
+
+      from ptv01 prop_le p1 topo_version
+      have "prop_topology_version p1 = prop_topology_version p0 \<or> prop_topology_version p1 = Suc (prop_topology_version p0)" by auto
+      thus "SP \<inter> SL \<noteq> {}"
+      proof (elim disjE)
+        assume eq: "prop_topology_version p1 = prop_topology_version p0"
+        show ?thesis
+        proof (intro quorum_inter)
+          from qSP show "quorum (prop_topology_version p0) SP" by (simp add: eq)
+          from qSL show "quorum (prop_topology_version p0) SL" .
+
+          have "quorum (prop_topology_version p0) \<in> set (rev (quorums_seq (values_lt_list i0)))"
+          proof (unfold quorum_topology_version [OF prop_le], intro nth_mem)
+            note prop_le
+            also have "instance_topology_version i0 < length (quorums_seq (values_lt_list i0))"
+              by (unfold instance_topology_version_def, intro topology_version_lt)
+            finally show "prop_topology_version p0 < length (rev (quorums_seq (values_lt_list i0)))" by simp
+          qed
+          thus "quorum (prop_topology_version p0) \<in> set (quorums_seq (values_lt_list i0))" by simp
+        qed
+      next
+        assume eq: "prop_topology_version p1 = Suc (prop_topology_version p0)"
+        show "SP \<inter> SL \<noteq> {}"
+        proof (intro quorum_inter_Suc)
+          have "quorum (prop_topology_version p1) = rev (quorums_seq (values_lt_list i0)) ! prop_topology_version p1"
+            by (intro quorum_topology_version p1)
+          also have "... = quorums_seq (values_lt_list i0) ! (length (quorums_seq (values_lt_list i0)) - Suc (prop_topology_version p1))"
+          proof (intro rev_nth)
+            note p1
+            also have "instance_topology_version i0 < length (quorums_seq (values_lt_list i0))"
+              by (unfold instance_topology_version_def, intro topology_version_lt)
+            finally show "prop_topology_version p1 < ..." .
+          qed
+          finally have "quorum (prop_topology_version p1) = ..." .
+          with qSP show "(quorums_seq (values_lt_list i0) ! (length (quorums_seq (values_lt_list i0)) - Suc (prop_topology_version p1))) SP" by simp
+
+          have "Suc (length (quorums_seq (values_lt_list i0)) - Suc (prop_topology_version p1)) = (length (quorums_seq (values_lt_list i0)) - (prop_topology_version p1))"
+          proof (intro Suc_diff_Suc)
+            note p1
+            also have "instance_topology_version i0 < length (quorums_seq (values_lt_list i0))"
+              by (unfold instance_topology_version_def, intro topology_version_lt)
+            finally show "prop_topology_version p1 < ..." .
+          qed
+          also have "... < length (quorums_seq (values_lt_list i0))"
+          proof (intro diff_less)
+            from eq show "0 < prop_topology_version p1" by simp
+            also note p1
+            also have "instance_topology_version i0 < length (quorums_seq (values_lt_list i0))"
+              by (unfold instance_topology_version_def, intro topology_version_lt)
+            finally show "0 < ..." .
+          qed
+          finally show "Suc (length (quorums_seq (values_lt_list i0)) - Suc (prop_topology_version p1)) < length (quorums_seq (values_lt_list i0))" .
+
+          have "length (quorums_seq (values_lt_list i0)) - Suc (prop_topology_version p0)
+            = length (quorums_seq (values_lt_list i0)) - prop_topology_version p1" by (simp add: eq)
+          also have "... = Suc (length (quorums_seq (values_lt_list i0)) - Suc (prop_topology_version p1))"
+          proof (intro sym [OF Suc_diff_Suc])
+            note p1
+            also have "instance_topology_version i0 < length (quorums_seq (values_lt_list i0))"
+              by (unfold instance_topology_version_def, intro topology_version_lt)
+            finally show "prop_topology_version p1 < ..." .
+          qed
+          finally have ix_eq: "length (quorums_seq (values_lt_list i0)) - Suc (prop_topology_version p0) = ..." .
+
+          have "quorum (prop_topology_version p0) = rev (quorums_seq (values_lt_list i0)) ! prop_topology_version p0"
+            by (intro quorum_topology_version prop_le)
+          also have "... = quorums_seq (values_lt_list i0) ! (length (quorums_seq (values_lt_list i0)) - Suc (prop_topology_version p0))"
+          proof (intro rev_nth)
+            note prop_le
+            also have "instance_topology_version i0 < length (quorums_seq (values_lt_list i0))"
+              by (unfold instance_topology_version_def, intro topology_version_lt)
+            finally show "prop_topology_version p0 < ..." .
+          qed
+          finally have "quorum (prop_topology_version p0) = ..." .
+          with qSL ix_eq
+          show "(quorums_seq (values_lt_list i0) ! Suc (length (quorums_seq (values_lt_list i0)) - Suc (prop_topology_version p1))) SL" by simp
+        qed
+      qed
+    qed
+
+  
+    from True
+    have some_chosen_eq: "some_chosen' = some_chosen"
+      by (auto simp add: some_chosen'_def some_chosen_def chosen'_def)
+
+    have value_chosen_eq: "value_chosen' = value_chosen"
+    proof (intro ext)
+      fix i
+      from True obtain p0' where chosen_i0: "chosen i0 p0'" by (auto simp add: some_chosen_def)
+
+      show "value_chosen' i = value_chosen i"
+      proof (cases "i = i0")
+        case True
+
+        have "value_chosen' i0 = value_proposed i0 p0'"
+        proof (unfold value_chosen'_def chosen'_def, rule theI2)
+          show "\<exists>p. ((i0, p) = (i0, p0) \<or> chosen i0 p) \<and> value_proposed i0 p = value_proposed i0 p0" by auto
+          fix v
+          assume "\<exists>p. ((i0, p) = (i0, p0) \<or> chosen i0 p) \<and> value_proposed i0 p = v"
+          then obtain p where chosen: "(i0, p) = (i0, p0) \<or> chosen i0 p" and p: "v = value_proposed i0 p" by auto
+
+          note p
+          also from chosen chosen_i0 have "value_proposed i0 p = value_proposed i0 p0'"
+            by (intro paxosL.paxos_consistent [OF paxos_i0], auto simp add: chosen'_def)
+          finally show "v = value_proposed i0 p0'" by auto
+
+          note p
+          also from chosen chosen_i0 have "value_proposed i0 p = value_proposed i0 p0"
+            by (intro paxosL.paxos_consistent [OF paxos_i0], auto simp add: chosen'_def)
+          finally show "v = value_proposed i0 p0" by auto
+        qed
+        also have "... = value_chosen i0" by (intro sym [OF multiPaxos_the_value] chosen_i0)
+        finally show "value_chosen' i = value_chosen i" by (simp add: True)
+      qed (auto simp add: value_chosen'_def value_chosen_def chosen'_def)
+    qed
+
+    have values_lt_list_eq: "values_lt_list' = values_lt_list"
+      by (simp add: values_lt_list'_def values_lt_list_def value_chosen_eq)
+
+    have instance_topology_version_eq: "instance_topology_version' = instance_topology_version"
+      and quorum_eq: "quorum' = quorum"
+      by (simp_all add: instance_topology_version'_def instance_topology_version_def values_lt_list_eq quorum'_def quorum_def)
+
+    from topo_version quorum_S chosen_quorum chosen_topology proposed_topology proposed_quorum
+    show ?thesis by (intro fast_intro, unfold instance_topology_version_eq quorum_eq some_chosen_eq, auto)
+
+  next
+    case False
+
+    from False chosen_le have some_chosen_eq: "some_chosen = (%i. i < i0)"
+    apply (intro ext iffI)
+    apply (metis nat_neq_iff)
+      by (metis Suc_inject Suc_pred' chosen_le chosen_pred diff_self_eq_0 gr0_implies_Suc less_imp_diff_less less_trans_Suc not_less_iff_gr_or_eq)
+
+    have "\<And>i p. chosen i p \<Longrightarrow> some_chosen i" by (auto simp add: some_chosen_def)
+    hence chosen_lt: "\<And>i p. chosen i p \<Longrightarrow> i < i0" by (simp add: some_chosen_eq)
+
+    have some_chosen'_eq: "some_chosen' = (%i. i \<le> i0)"
+    proof (intro ext)
+      fix i
+      from less_linear [of i i0]
+      show "some_chosen' i = (i \<le> i0)"
+      proof (elim disjE) (*, auto simp add: some_chosen'_def chosen'_def)*)
+        assume ii0: "i < i0"
+        with some_chosen_eq have "some_chosen i" by auto
+        with ii0 show ?thesis
+          by (auto simp add: some_chosen'_def chosen'_def some_chosen_def)
+      next
+        assume i0i: "i0 < i"
+        hence "i \<noteq> i0" "\<not> some_chosen i" by (simp_all add: some_chosen_eq)
+        with i0i show ?thesis
+          by (auto simp add: some_chosen'_def chosen'_def some_chosen_def)
+      qed (auto simp add: some_chosen'_def chosen'_def some_chosen_def)
+    qed
+
+    have all_j_i_lt: "\<And>i. \<forall>j<i. some_chosen' j \<Longrightarrow> i \<le> Suc i0"
+    apply (unfold some_chosen'_eq)
+      by (metis Suc_n_not_le_n not_le)
+
+    have value_chosen_i0: "value_chosen' i0 = value_proposed i0 p0"
+    proof (unfold value_chosen'_def, rule theI2)
+      show "\<exists>p. chosen' i0 p \<and> value_proposed i0 p = value_proposed i0 p0"
+        by (auto simp add: chosen'_def)
+
+      fix v
+      assume "\<exists>p. chosen' i0 p \<and> value_proposed i0 p = v"
+      then obtain p where c: "chosen' i0 p" and v: "value_proposed i0 p = v" by auto
+
+      from c False have "p0 = p" by (auto simp add: chosen'_def some_chosen_def)
+      with v show "v = value_proposed i0 p0" "v = value_proposed i0 p0" by auto
+    qed
+
+    show ?thesis
+    proof (intro fast_intro)
+      have "quorum' (prop_topology_version p0) S = quorum (prop_topology_version p0) S"
+        by (intro cong [OF quorum_eq] refl prop_le)
+      also note quorum_S
+      finally show "quorum' (prop_topology_version p0) S" .
+
+      have "instance_topology_version' i0 = instance_topology_version i0"
+        by (auto simp add: instance_topology_version_eq)
+      also note topo_version
+      finally show "instance_topology_version' i0 \<le> Suc (prop_topology_version p0)".
+
+    next
+      fix i p
+      assume c: "chosen i p"
+      note ii0 = chosen_lt [OF c]
+
+      from ii0
+      have "instance_topology_version' i = instance_topology_version i"
+        by (auto simp add: instance_topology_version_eq)
+      also note chosen_topology [OF c]
+      finally show "instance_topology_version' i \<le> Suc (prop_topology_version p)" .
+
+      have "quorum' (prop_topology_version p) = quorum (prop_topology_version p)"
+      proof (intro quorum_eq)
+        from ii0 have all_j_i: "\<forall>j<i. some_chosen j" by (unfold some_chosen_eq, auto)
+  
+        from ii0 desc_lt_append
+        have "map value_chosen (desc_lt i0) = map value_chosen (map (\<lambda>j. j + i) (desc_lt (i0 - i)) @ desc_lt i)"
+          by (intro cong [OF refl desc_lt_append, where f = "map value_chosen"], simp)
+        hence map_eq: "map value_chosen (desc_lt i0) = (map value_chosen (map (\<lambda>j. j + i) (desc_lt (i0 - i)))) @ (map value_chosen (desc_lt i))"
+          by simp
+
+        from chosen_quorum [OF c]
+        obtain a where accepted: "accepted i a p" by auto
+        note proposed_topology [OF accepts_proposed [OF this] all_j_i]
+        also have "instance_topology_version i \<le> instance_topology_version i0"
+          by (unfold instance_topology_version_def values_lt_list_def map_eq, intro topology_version_mono)
+        finally show "prop_topology_version p \<le> instance_topology_version i0" .
+      qed
+
+      with chosen_quorum [OF c]
+      show "\<exists>S. S \<noteq> {} \<and> quorum' (prop_topology_version p) S \<and> (\<forall>a\<in>S. accepted i a p)" by simp
+
+    next
+      fix i p
+      assume proposed: "proposed i p" and all_j_i': "\<forall>j<i. some_chosen' j"
+     
+      from all_j_i_lt [OF all_j_i'] have ii0: "i \<le> Suc i0" .
+
+      from ii0 have i_options3: "i < i0 \<or> i = i0 \<or> i = Suc i0" by auto
+      from ii0 have i_options2: "i \<le> i0 \<or> i = Suc i0" by auto
+
+      from i_options2
+      show "prop_topology_version p \<le> instance_topology_version' i"
+      proof (elim disjE)
+        assume ii0: "i \<le> i0"
+        with all_some_chosen have all_j_i: "\<forall>j<i. some_chosen j" by auto
+        note proposed_topology [OF proposed all_j_i]
+        also from ii0 have "instance_topology_version i = instance_topology_version' i"
+          by (intro sym [OF instance_topology_version_eq], simp)
+        finally show "prop_topology_version p \<le> instance_topology_version' i" .
+      next
+        assume ii0: "i = Suc i0"
+        have "instance_topology_version' i = instance_topology_version' (Suc i0)" by (simp add: ii0)
+        also have "... = (SOME x. False)"
+        proof (unfold instance_topology_version'_def values_lt_list'_def, simp add: Let_def)
