@@ -90,7 +90,13 @@ have a topology version no less than the instance's topology version minus one. 
 needed to allow proposals to be chosen with a slightly-old topology. The condition on each topology to intersect all of
 its subsequent topology is used to show that consistency is preserved even given this extra flexibility.
 
-There is also a condition that an instance cannot have a value chosen until the previous instance has been chosen, since without knowing all the previous values we cannot know what the current topology is.
+Notice that, because instance topology versions are increasing, proposers can safely continue to make proposals even if
+they have not yet learned that a new topology version has been chosen. Of course if they get too far out-of-date then their
+proposals will never be chosen.
+
+However, it is important when choosing a proposal to know the instance's topology version,
+so condition `chosen_Suc` ensures that an instance cannot have a value chosen until the previous
+instance has been chosen (and hence all prior instances have too).
 
 There is one extra message type, `multi_promised`, which is effectively a `promised_free` message for all future instances simultaneously.
 
