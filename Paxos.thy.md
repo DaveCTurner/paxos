@@ -1,6 +1,33 @@
-# Safety proof
+# Introduction
 
-The file [Paxos.thy](Paxos.thy) contains an Isabelle-checked proof of the safety property of Paxos. Less formally:
+Paxos is a distributed consensus algorithm with a rather nice correctness proof of its safety property: the decisions
+made by a Paxos cluster will always be consistent even in the face of arbitrary network partitions or delays (although
+if the network goes down it will stop making progress).
+
+The file [Paxos.thy](Paxos.thy) contains an Isabelle-checked proof of the safety property of Paxos and related
+theorems. This document is a less formal commentary on the proofs.
+
+# Weighted Majority Quorums
+
+First we prove a couple of facts about quorums as defined by weighted majority: if the weighting
+function is integer then one of its values can be changed by one unit and every quorum of the new function
+intersects every quorum of the old function, and the weights can all be multiplied or divided by constants without
+changing the quorum structure.
+
+This will be useful later when looking at managing the topology of a Paxos cluster using consensus within
+the cluster, as if the topology changes sufficiently slowly then this can be achieved without having to re-run
+the whole algorithm at each change.
+
+# Topology versioning
+
+Next we define the notion of a sequence of topologies, derived from a sequence of values as agreed by a Paxos cluster.
+Each topology must consist of pairwise-intersecting, finite, nonempty sets, and moreover subsequent topologies must
+pairwise intersect too.
+
+# Single-instance Paxos
+
+Next we prove that any single instance of Paxos remains consistent, by describing an invariant and showing that
+this invariant implies consistency.
 
 Let 
 - `pid` be the type of proposal identifiers,
@@ -48,22 +75,40 @@ Interestingly, there's no need to consider the passage of time or similar, which
 
 Of course, other messages can be sent without affecting this safety proof - in particular, you need to pass the actual values around somehow, and hold leadership elections and send negative acknowledgements and so on, and actually get the acceptors to promise things by sending the initial `prepare` message which is also notably absent here.
 
+# Multi-Paxos
+
+Next we extend our attention to a sequence of Paxos instances, including the ability for each instance to alter
+the topology of subsequent instances. The multi-Paxos invariant is quite similar to the single-Paxos one with an extra
+parameter `i` indicating the instance number, and proposals now carry a topology version number, and instances
+have a version number which is defined by the sequence of values agreed by previous instances. Topology versions
+must be increasing in the proposal id and instance number respectively.
+
+There are also two properties, `proposed_topology` and `chosen_topology`, relating the topology version number of proposals
+to the topology version of each instance. Informally, when making a proposal the topology version number must be no
+greater than the instance's topology version and when choosing a proposal the proposal must
+have a topology version no less than the instance's topology version minus one. That 'minus one' gives the extra wiggle room
+needed to allow proposals to be chosen with a slightly-old topology. The condition on each topology to intersect with
+its subsequent topology is what is needed to preserve consistency subject to this extra flexibility.
+
+There is also a condition that an instance cannot have a value chosen until the previous instance has been chosen, which
+is necessary since without knowing all the previous values we cannot know what the current topology is.
+
+There is one extra message type, `multi_promised`, which is effectively a `promised_free` message for all future instances simultaneously.
+
+Consistency follows from these invariants by showing that each instance satisfies the single-Paxos invariant.
+
 ## Preserving invariants
 
-The remainder of the file shows that the empty model (containing no messages) is safe and shows some conditions under which a safe model can be modified (by sending a message or updating one of the value functions) into another safe model: 
+The remainder of the file shows that the empty model (containing no messages) satisfies the
+multi-Paxos invariant and shows some conditions
+under which an invariant-satisfying model can be modified (by sending a message or updating one of the value functions) into
+another invariant-satisfying model. These conditions are designed to be straightforward to verify in an implementation.
 
 ### For a proposer:
 
 1. If there's a quorum of acceptors `S ∈ QP` that all promised to accept a proposal `p` with no prior value (i.e. `promised_free a p` for all `a ∈ S`) then `p` can be proposed.
 2. If there's a quorum of acceptors `S ∈ QP` that all promised to accept a proposal `p` but some of them sent a prior value (i.e. `promised_free a p` or `promised_prev a p` for all `a ∈ S` and `promised_prev a p p'` for some `a ∈ S`) then  `p` can be proposed as long as its value matches the value of the response with the highest identifier.
 3. The value of a proposal can be freely changed as long as it has not already been proposed.
-
-### For a learner:
-
-1. If there's a quorum of acceptors `S ∈ QL p` that all accept a proposal `p` then that proposal may be chosen.
-2. `QL p` can be freely changed as long as its elements all remain quorums; in particular
-  1. extra quorums may be added to `QL p`, and
-  2. if `p` can never be chosen then `QL p` can be changed freely.
 
 ### For an acceptor
 
@@ -73,8 +118,10 @@ The remainder of the file shows that the empty model (containing no messages) is
 4. An acceptor may freely update `vP` for any proposals for which it has not sent a promise.
 5. An acceptor may freely update `vA` for any proposals which it has not accepted.
 
-## Quorum design
 
-A simple way of picking quorums is by straight majority, which can be generalised slightly to allow different acceptors to have different weights and each quorum has a majority of weight. Weights here are natural numbers, since more general rational weights can be scaled to become natural numbers without altering the quorums.
+### For a learner:
 
-Lemma `weighted_majority_intersects` shows that any two weighted-majority sets always intersect; furthermore if the weighting function is altered by changing the weight of one acceptor by one unit then every new-weighted-majority set intersects every old-weighted-majority set too. This paves the way for a method for changing a weighted-majority-based quorum structure without compromising correctness.
+1. If there's a quorum of acceptors `S ∈ QL p` that all accept a proposal `p` then that proposal may be chosen.
+2. `QL p` can be freely changed as long as its elements all remain quorums; in particular
+  1. extra quorums may be added to `QL p`, and
+  2. if `p` can never be chosen then `QL p` can be changed freely.
