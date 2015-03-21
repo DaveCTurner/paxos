@@ -21,13 +21,13 @@ the whole algorithm at each change.
 # Topology versioning
 
 Next we define the notion of a sequence of topologies, derived from a sequence of values as agreed by a Paxos cluster.
-Each topology must consist of pairwise-intersecting, finite, nonempty sets, and moreover subsequent topologies must
-pairwise intersect too.
+Each topology must consist of pairwise-intersecting, finite, nonempty sets called 'quorums', and moreover quorums from
+adjacent pairs of topologies must all pairwise intersect too.
 
 # Single-instance Paxos
 
-Next we prove that any single instance of Paxos remains consistent, by describing an invariant and showing that
-this invariant implies consistency.
+Next we prove (following Lamport's method) that any single instance of Paxos remains consistent,
+by describing an invariant and showing that this invariant implies consistency.
 
 Let 
 - `pid` be the type of proposal identifiers,
@@ -79,19 +79,18 @@ Of course, other messages can be sent without affecting this safety proof - in p
 
 Next we extend our attention to a sequence of Paxos instances, including the ability for each instance to alter
 the topology of subsequent instances. The multi-Paxos invariant is quite similar to the single-Paxos one with an extra
-parameter `i` indicating the instance number, and proposals now carry a topology version number, and instances
+parameter `i` indicating the instance number. Proposals identifiers now carry a topology version number, and instances
 have a version number which is defined by the sequence of values agreed by previous instances. Topology versions
-must be increasing in the proposal id and instance number respectively.
+must be increasing in the proposal identifiers and instance number respectively.
 
 There are also two properties, `proposed_topology` and `chosen_topology`, relating the topology version number of proposals
-to the topology version of each instance. Informally, when making a proposal the topology version number must be no
+to the topology version of each instance: when making a proposal the topology version number must be no
 greater than the instance's topology version and when choosing a proposal the proposal must
 have a topology version no less than the instance's topology version minus one. That 'minus one' gives the extra wiggle room
-needed to allow proposals to be chosen with a slightly-old topology. The condition on each topology to intersect with
-its subsequent topology is what is needed to preserve consistency subject to this extra flexibility.
+needed to allow proposals to be chosen with a slightly-old topology. The condition on each topology to intersect all of
+its subsequent topology is used to show that consistency is preserved even given this extra flexibility.
 
-There is also a condition that an instance cannot have a value chosen until the previous instance has been chosen, which
-is necessary since without knowing all the previous values we cannot know what the current topology is.
+There is also a condition that an instance cannot have a value chosen until the previous instance has been chosen, since without knowing all the previous values we cannot know what the current topology is.
 
 There is one extra message type, `multi_promised`, which is effectively a `promised_free` message for all future instances simultaneously.
 
@@ -106,11 +105,16 @@ another invariant-satisfying model. These conditions are designed to be straight
 
 ### For a proposer:
 
+See lemmas `multiPaxos_change_value_proposed`, `multiPaxos_add_proposal_free` and `multiPaxos_add_proposal_constrained`.
+
 1. If there's a quorum of acceptors `S ∈ QP` that all promised to accept a proposal `p` with no prior value (i.e. `promised_free a p` for all `a ∈ S`) then `p` can be proposed.
 2. If there's a quorum of acceptors `S ∈ QP` that all promised to accept a proposal `p` but some of them sent a prior value (i.e. `promised_free a p` or `promised_prev a p` for all `a ∈ S` and `promised_prev a p p'` for some `a ∈ S`) then  `p` can be proposed as long as its value matches the value of the response with the highest identifier.
 3. The value of a proposal can be freely changed as long as it has not already been proposed.
 
 ### For an acceptor
+
+See lemmas `multiPaxos_change_value_promised`, `multiPaxos_change_value_accepted`, 
+`multiPaxos_add_promise_free`, `multiPaxos_add_multi_promise` and `multiPaxos_add_promise_prev`.
 
 1. If an acceptor has accepted no proposals then it may promise to accept anything, with no prior value.
 2. If an acceptor has accepted some proposals then it may promise to accept any later proposals, as long as it includes the identifier of the highest proposal it has previously accepted and as long as the values `vP` and `vA` agree where promises are made.
@@ -120,6 +124,8 @@ another invariant-satisfying model. These conditions are designed to be straight
 
 
 ### For a learner:
+
+See lemma `multiPaxos_add_choice`.
 
 1. If there's a quorum of acceptors `S ∈ QL p` that all accept a proposal `p` then that proposal may be chosen.
 2. `QL p` can be freely changed as long as its elements all remain quorums; in particular
