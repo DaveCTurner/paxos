@@ -1087,6 +1087,38 @@ using assms chosen_topology chosen_Suc
 apply unfold_locales
   by (simp_all add: quorum_def values_lt_list_def value_chosen_def instance_topology_version_def some_chosen_def)
 
+lemma (in multiPaxosL) instance_topology_version_mono:
+  assumes i10: "i1 \<le> i0"
+  assumes i1_chosen: "\<And>j. j < i1 \<Longrightarrow> some_chosen j"
+  shows "instance_topology_version i1 \<le> instance_topology_version (GREATEST j. j \<le> i0 \<and> (\<forall>k < j. some_chosen k))"
+proof -
+  def i2 == "GREATEST j. j \<le> i0 \<and> (\<forall>k < j. some_chosen k)"
+  have "i2 \<le> i0 \<and> (\<forall>k < i2. some_chosen k)"
+  proof (unfold i2_def, intro GreatestI conjI)
+    from i10 show "i1 \<le> i0" .
+    from i1_chosen show "\<forall>j < i1. some_chosen j" by simp
+    show "\<forall>j. j \<le> i0 \<and> (\<forall>k<j. some_chosen k) \<longrightarrow> j < Suc i0" by auto
+  qed
+  hence i20: "i2 \<le> i0" and i2_chosen: "\<And>k. k < i2 \<Longrightarrow> some_chosen k" by auto
+
+  have i12: "i1 \<le> i2"
+  proof (unfold i2_def, intro Greatest_le conjI i10 allI impI i1_chosen)
+    fix j assume "j \<le> i0 \<and> (\<forall>k<j. some_chosen k)" thus "j < Suc i0" by auto
+  qed
+
+  have "instance_topology_version i1 = topology_version (map value_chosen (desc_lt i1))"
+    by (simp add: instance_topology_version_def values_lt_list_def)
+  also note topology_version_mono
+  also have "topology_version ((map value_chosen (map (%i. i + i1) (desc_lt (i2 - i1)))) @ map value_chosen (desc_lt i1))
+    = topology_version (map value_chosen (desc_lt i2))"
+  by (fold map_append,
+    intro cong [OF refl, where f = topology_version]
+          cong [OF refl, where f = "map value_chosen"]
+          sym [OF desc_lt_append] i12)
+  finally show "instance_topology_version i1 \<le> instance_topology_version (GREATEST j. j \<le> i0 \<and> (\<forall>k<j. some_chosen k))"
+    by (simp add: instance_topology_version_def i2_def values_lt_list_def)
+qed
+
 lemma (in multiPaxosL) multiPaxos_add_proposal_free:
   assumes quorum_S: "quorum (prop_topology_version p0) S"
   assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> promised_free i0 a p0 \<or> (\<exists>j \<le> i0. multi_promised j a p0)"
@@ -1141,20 +1173,26 @@ proof -
   from ip
   show "prop_topology_version p \<le> instance_topology_version (GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen k))"
   proof (elim disjE)
-    (* TODO *)
-  note proposed_topology
-
-  assume "\<forall>j<i. some_chosen j"
-  with ip have "prop_topology_version p \<le> instance_topology_version i"
-    by (metis prod.sel proposed_topology topo_version)
-
+    assume "proposed i p"
+    from proposed_topology [OF this]
+    show "prop_topology_version p \<le> instance_topology_version (GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen k))" .
+  next
+    assume "(i, p) = (i0, p0)" hence eq: "i = i0" "p = p0" by simp_all
+    note topo_version
+    also note instance_topology_version_mono [OF i10 i1_chosen]
+    finally show "prop_topology_version p
+      \<le> instance_topology_version (GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen k))"
+      by (simp add: eq)
+  qed
 qed simp_all
 
 lemma (in multiPaxosL) multiPaxos_add_proposal_constrained:
   assumes quorum_S: "quorum (prop_topology_version p0) S"
   assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> promised_free i0 a p0 \<or> (\<exists>j \<le> i0. multi_promised j a p0) \<or> (EX p1. promised_prev i0 a p0 p1)"
   assumes promised_S_value: "\<And>a p1. a \<in> S \<Longrightarrow> promised_prev i0 a p0 p1 \<Longrightarrow> value_proposed i0 p0 = value_promised i0 a p0 \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i0 a2 p0 p2 \<and> p1 \<prec> p2)"
-  assumes topo_version: "prop_topology_version p0 \<le> instance_topology_version i0"
+  assumes topo_version: "prop_topology_version p0 \<le> instance_topology_version i1"
+  assumes i10: "i1 \<le> i0"
+  assumes i1_chosen: "\<And>j. j < i1 \<Longrightarrow> some_chosen j"
   shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
   multi_promised promised_free promised_prev
   (%i p. (i,p) = (i0,p0) \<or> proposed i p)
@@ -1190,6 +1228,22 @@ proof -
       show "value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2)" by simp
     qed
   qed simp
+
+  fix i p
+  assume "(i, p) = (i0, p0) \<or> proposed i p"
+  thus "prop_topology_version p \<le> instance_topology_version (GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen k))"
+  proof (elim disjE)
+    assume "proposed i p"
+    from proposed_topology [OF this]
+    show "prop_topology_version p \<le> instance_topology_version (GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen k))" .
+  next
+    assume "(i, p) = (i0, p0)" hence eq: "i = i0" "p = p0" by simp_all
+    note topo_version
+    also note instance_topology_version_mono [OF i10 i1_chosen]
+    finally show "prop_topology_version p
+      \<le> instance_topology_version (GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen k))"
+      by (simp add: eq)
+  qed
 qed auto
 
 (* the Acceptor only needs to know what it has previously accepted and promised
@@ -1469,9 +1523,7 @@ lemma (in multiPaxosL) multiPaxos_intro:
           \<or> (\<exists> a2 \<in> S. EX p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2))"
 
   assumes proposed_topology:
-    "\<And> i p. proposed i p 
-      \<Longrightarrow> \<forall>j < i. some_chosen' j
-      \<Longrightarrow> prop_topology_version p \<le> instance_topology_version' i"
+    "\<And> i p. proposed i p \<Longrightarrow> prop_topology_version p \<le> instance_topology_version' (GREATEST j. j \<le> i \<and> (\<forall>k < j. some_chosen' k))"
 
   assumes accepts_value:
     "\<And> i p a. accepted i a p \<Longrightarrow> value_accepted i a p = value_proposed' i p"
@@ -1692,7 +1744,7 @@ proof -
     
     assume "\<And>i p. proposed i p \<Longrightarrow> \<exists>S. quorum' (prop_topology_version p) S \<and>
                (\<forall>a\<in>S. (promised_free i a p \<or> (\<exists>j\<le>i. multi_promised j a p)) \<or> (\<exists>p1. promised_prev i a p p1)) \<and> (\<forall>a1\<in>S. \<forall>p1. promised_prev i a1 p p1 \<longrightarrow> value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2))"
-           "\<And>i p. proposed i p \<Longrightarrow> \<forall>j<i. some_chosen' j \<Longrightarrow> prop_topology_version p \<le> instance_topology_version' i"
+           "\<And>i p. proposed i p \<Longrightarrow> prop_topology_version p \<le> instance_topology_version' (GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen' k))"
     hence ?thesis
     proof (intro multiPaxos_intro [OF defns _ _ va _ _ sc])
       fix i p
@@ -1701,7 +1753,7 @@ proof -
       from c chosen_topology topology_i0 show "instance_topology_version' i \<le> Suc (prop_topology_version p)" by (auto simp add: chosen'_def)
     qed
   }
-  note fast_intro = this      
+  note fast_intro = this
 
   have chosen'_proposed: "\<And>i p. chosen' i p \<Longrightarrow> proposed i p"
       and chosen'_chosen_lt: "\<And>i p. chosen' i p \<Longrightarrow> \<forall>j<i. some_chosen j"
@@ -1744,10 +1796,15 @@ proof -
   have all_some_chosen: "\<forall>j<i0. some_chosen j"
     by (metis Suc_inject Suc_pred' chosen_le chosen_pred comm_monoid_diff_class.diff_cancel gr0_implies_Suc less_imp_diff_less less_trans_Suc not_less_iff_gr_or_eq)
 
+  have g_eq: "(GREATEST j. j \<le> i0 \<and> (\<forall>k<j. some_chosen k)) = i0"
+    by (intro Greatest_equality conjI all_some_chosen, auto)
+
   {
+    
     from accepted_S nonempty_S obtain a where "accepted i0 a p0" by auto
-    from proposed_topology [OF accepts_proposed [OF this] all_some_chosen]
-    have "prop_topology_version p0 \<le> instance_topology_version i0" .
+    from proposed_topology [OF accepts_proposed [OF this]]
+    have "prop_topology_version p0 \<le> instance_topology_version i0"
+      by (simp add: g_eq)
   }
   note prop_le = this
 
@@ -1855,7 +1912,6 @@ proof -
       qed
     qed
 
-  
     from True
     have some_chosen_eq: "some_chosen' = some_chosen"
       by (auto simp add: some_chosen'_def some_chosen_def chosen'_def)
@@ -1982,7 +2038,9 @@ proof -
 
         from chosen_quorum [OF c]
         obtain a where accepted: "accepted i a p" by auto
-        note proposed_topology [OF accepts_proposed [OF this] all_j_i]
+        note proposed_topology [OF accepts_proposed [OF this]]
+        also have "instance_topology_version (GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen k)) = instance_topology_version i"
+          by (intro cong [OF refl Greatest_equality] conjI all_j_i, auto)
         also have "instance_topology_version i \<le> instance_topology_version i0"
           by (unfold instance_topology_version_def values_lt_list_def map_eq, intro topology_version_mono)
         finally show "prop_topology_version p \<le> instance_topology_version i0" .
@@ -1993,24 +2051,73 @@ proof -
 
     next
       fix i p
-      assume proposed: "proposed i p" and all_j_i': "\<forall>j<i. some_chosen' j"
-     
-      from all_j_i_lt [OF all_j_i'] have ii0: "i \<le> Suc i0" .
+      assume proposed: "proposed i p"
 
-      from ii0 have i_options3: "i < i0 \<or> i = i0 \<or> i = Suc i0" by auto
-      from ii0 have i_options2: "i \<le> i0 \<or> i = Suc i0" by auto
+      def i1 == "(GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen k))"
+      
+      have "i1 \<le> i \<and> (\<forall>k<i1. some_chosen k)"
+      proof (unfold i1_def some_chosen_eq, intro GreatestI conjI)
+        show "0 \<le> i" "\<forall>k<0. k < i0" by simp_all
+        show "\<forall>y. y \<le> i \<and> (\<forall>k<y. k < i0) \<longrightarrow> y < Suc i" by simp
+      qed
+      hence i1i: "i1 \<le> i" and i1_chosen: "\<forall>k<i1. some_chosen k" by simp_all
 
-      from i_options2
-      show "prop_topology_version p \<le> instance_topology_version' i"
-      proof (elim disjE)
-        assume ii0: "i \<le> i0"
-        with all_some_chosen have all_j_i: "\<forall>j<i. some_chosen j" by auto
-        note proposed_topology [OF proposed all_j_i]
-        also from ii0 have "instance_topology_version i = instance_topology_version' i"
-          by (intro sym [OF instance_topology_version_eq], simp)
-        finally show "prop_topology_version p \<le> instance_topology_version' i" .
-      next
-        assume ii0: "i = Suc i0"
-        have "instance_topology_version' i = instance_topology_version' (Suc i0)" by (simp add: ii0)
-        also have "... = (SOME x. False)"
-        proof (unfold instance_topology_version'_def values_lt_list'_def, simp add: Let_def)
+      from i1_chosen have i10: "i1 \<le> i0"
+      apply (unfold some_chosen_eq)
+        by (metis less_irrefl not_less)
+
+      have i1_i1': "i1 \<le> (GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen' k))"
+      proof (intro Greatest_le conjI i1i)
+        from i10 show "\<forall>k<i1. some_chosen' k" by (simp add: some_chosen'_eq)
+        show "\<forall>y. y \<le> i \<and> (\<forall>k<y. some_chosen' k) \<longrightarrow> y < Suc i" by simp
+      qed
+
+      def i1' == "(GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen' k))"
+      from i10 have i1_i1': "i1 \<le> i1'"
+        by (unfold i1'_def some_chosen'_eq, intro Greatest_le [where b = "Suc i"] conjI i1i, auto)
+
+      from proposed_topology [OF proposed]
+      have "prop_topology_version p \<le> instance_topology_version i1"
+        by (simp add: i1_def)
+      also from i10 have "... = instance_topology_version' i1"
+        by (simp add: instance_topology_version_eq)
+      also have "... = topology_version (map value_chosen' (desc_lt i1))"
+        by (simp add: instance_topology_version'_def values_lt_list'_def)
+      also note topology_version_mono
+      also have "topology_version ((map value_chosen' (map (%i. i + i1) (desc_lt (i1' - i1)))) @ map value_chosen' (desc_lt i1))
+        = topology_version (map value_chosen' (desc_lt i1'))"
+      by (fold map_append,
+        intro cong [OF refl, where f = topology_version]
+              cong [OF refl, where f = "map value_chosen'"]
+              sym [OF desc_lt_append] i1_i1')     
+      also have "... = instance_topology_version' (GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen' k))"
+        by (simp add: instance_topology_version'_def values_lt_list'_def i1'_def)
+      finally show "prop_topology_version p \<le> instance_topology_version' (GREATEST j. j \<le> i \<and> (\<forall>k<j. some_chosen' k))" .
+
+      have q_eq: "quorum' (prop_topology_version p) = quorum (prop_topology_version p)"
+      proof (intro quorum_eq)
+        from proposed_topology [OF proposed]
+        have "prop_topology_version p \<le> instance_topology_version i1"
+          by (simp add: i1_def)
+        also have "... = topology_version (map value_chosen (desc_lt i1))"
+          by (simp add: instance_topology_version_def values_lt_list_def)
+        also note topology_version_mono
+        also have "topology_version ((map value_chosen (map (%i. i + i1) (desc_lt (i0 - i1)))) @ map value_chosen (desc_lt i1))
+          = topology_version (map value_chosen (desc_lt i0))"
+          by (fold map_append,
+          intro cong [OF refl, where f = topology_version]
+                cong [OF refl, where f = "map value_chosen"]
+                sym [OF desc_lt_append] i10)
+        also have "... = instance_topology_version i0"
+          by (simp add: instance_topology_version_def values_lt_list_def)
+        finally show "prop_topology_version p \<le> ..." .
+      qed
+
+      show "\<exists>S. quorum' (prop_topology_version p) S \<and>
+               (\<forall>a\<in>S. (promised_free i a p \<or> (\<exists>j\<le>i. multi_promised j a p)) \<or> (\<exists>p1. promised_prev i a p p1)) \<and>
+               (\<forall>a1\<in>S. \<forall>p1. promised_prev i a1 p p1 \<longrightarrow> value_proposed i p = value_promised i a1 p \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i a2 p p2 \<and> p1 \<prec> p2))"
+        by (unfold q_eq, intro proposed_quorum proposed)
+    qed
+  qed
+qed
+
