@@ -262,24 +262,10 @@ locale topologyL =
   assumes quorum_finite:    "\<And>vs q S. q \<in> set (quorums_seq vs) \<Longrightarrow> q S  \<Longrightarrow> finite S"
   assumes quorum_nonempty:  "\<And>vs q S. q \<in> set (quorums_seq vs) \<Longrightarrow> q S  \<Longrightarrow> S \<noteq> {}"
 
-  fixes topology_version_increment :: "'value \<Rightarrow> nat"
-
-fun (in topologyL) topology_version :: "'value list \<Rightarrow> nat"
-  where
-    "topology_version [] = 0"
-  | "topology_version (v#vs) = (let vn = topology_version vs; incr = topology_version_increment v
-    in (if vn + incr < length (quorums_seq (v#vs)) then vn + incr else vn))"
-
-lemma (in topologyL) topology_version_lt:
-  "topology_version vs < length (quorums_seq vs)"
-proof (induct vs)
-  case (Cons v vs)
-  from quorums_seq_cons
-  obtain qv where qv: "quorums_seq (v#vs) = qv @ quorums_seq vs" by auto
-  show ?case
-  apply (simp add: qv Let_def)
-    by (metis Cons.hyps trans_less_add2)
-qed (simp add: quorums_seq_nil)
+  fixes topology_version :: "'value list \<Rightarrow> nat"
+  assumes topology_version_nil: "topology_version [] = 0"
+  assumes topology_version_cons: "\<And>v vs. topology_version (v#vs) \<ge> topology_version vs"
+  assumes topology_version_lt: "\<And>vs. topology_version vs < length (quorums_seq vs)"
 
 lemma (in topologyL) quorums_seq_length_mono: "length (quorums_seq vs0) \<le> length (quorums_seq (vs1 @ vs0))"
 proof (induct vs1)
@@ -343,7 +329,8 @@ lemma (in topologyL) topology_version_mono:
 proof (induct vs1)
   case (Cons v vs1)
   note Cons.hyps
-  also have "topology_version (vs1 @ vs0) \<le> topology_version ((v # vs1) @ vs0)" by (simp add: Let_def)
+  also from topology_version_cons
+  have "topology_version (vs1 @ vs0) \<le> topology_version ((v # vs1) @ vs0)" by simp
   finally show ?case .
 qed simp
 
@@ -686,12 +673,12 @@ locale propTvL = propNoL +
 
 locale multiPaxosL
   = p: propNoL lt le
-  + t: topologyL quorums_seq topology_version_increment
+  + t: topologyL quorums_seq topology_version
   + v: propTvL lt le prop_topology_version
   for lt :: "'pid \<Rightarrow> 'pid \<Rightarrow> bool" (infixl "\<prec>" 50) 
   and le :: "'pid \<Rightarrow> 'pid \<Rightarrow> bool" (infixl "\<preceq>" 50)
   and quorums_seq :: "'value list \<Rightarrow> ('aid set \<Rightarrow> bool) list"
-  and topology_version_increment :: "'value \<Rightarrow> nat"
+  and topology_version :: "'value list \<Rightarrow> nat"
   and prop_topology_version :: "'pid \<Rightarrow> nat"
   +
 
@@ -1030,7 +1017,7 @@ qed
 
 lemma paxos_empty:
   assumes "propNoL lt le"
-  assumes "topologyL quorums_seq"
+  assumes "topologyL quorums_seq topology_version"
   assumes "propTvL lt le prop_topology_version"
 
   assumes "\<And> i a p p1. \<not>promised_prev i a p p1"
@@ -1039,7 +1026,7 @@ lemma paxos_empty:
   assumes "\<And> i a p. \<not>accepted i a p"
   assumes "\<And> i p. \<not>chosen i p"
 
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version multi_promised promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version multi_promised promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
 using assms by (unfold_locales, auto simp add: propNoL_def topologyL_def propTvL_def propTvL_axioms_def)
 
 lemma (in multiPaxosL) multiPaxos_intro_simple:
@@ -1080,7 +1067,7 @@ lemma (in multiPaxosL) multiPaxos_intro_simple:
   assumes chosen_quorum:
     "\<And> i p. chosen i p \<Longrightarrow> EX S. S \<noteq> {} \<and> quorum (prop_topology_version p) S \<and> (ALL a:S. accepted' i a p)"
 
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
   multi_promised' promised_free' promised_prev' proposed' accepted' chosen
   value_promised' value_proposed value_accepted'"
 using assms chosen_topology chosen_Suc
@@ -1125,7 +1112,7 @@ lemma (in multiPaxosL) multiPaxos_add_proposal_free:
   assumes topo_version: "prop_topology_version p0 \<le> instance_topology_version i1"
   assumes i10: "i1 \<le> i0"
   assumes i1_chosen: "\<And>j. j < i1 \<Longrightarrow> some_chosen j"
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
   multi_promised promised_free promised_prev
   (%i p. (i,p) = (i0,p0) \<or> proposed i p)
   accepted chosen value_promised value_proposed value_accepted"
@@ -1193,7 +1180,7 @@ lemma (in multiPaxosL) multiPaxos_add_proposal_constrained:
   assumes topo_version: "prop_topology_version p0 \<le> instance_topology_version i1"
   assumes i10: "i1 \<le> i0"
   assumes i1_chosen: "\<And>j. j < i1 \<Longrightarrow> some_chosen j"
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
   multi_promised promised_free promised_prev
   (%i p. (i,p) = (i0,p0) \<or> proposed i p)
   accepted chosen value_promised value_proposed value_accepted"
@@ -1250,7 +1237,7 @@ qed auto
 to send promised messages *)
 lemma (in multiPaxosL) multiPaxos_add_promise_free:
   assumes not_accepted: "\<And>p. \<not>accepted i0 a0 p"
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
   multi_promised
   (%i a p. (i, a, p) = (i0, a0, p0) \<or> promised_free i a p)
   promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
@@ -1296,7 +1283,7 @@ qed simp_all
 to send promised messages *)
 lemma (in multiPaxosL) multiPaxos_add_multi_promise:
   assumes not_accepted: "\<And>p j. i0 \<le> j \<Longrightarrow> \<not>accepted j a0 p"
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
   (%i a p. (i, a, p) = (i0, a0, p0) \<or> multi_promised i a p)
   promised_free promised_prev proposed accepted chosen value_promised value_proposed value_accepted"
 using accepts_proposed accepts_value chosen_Suc chosen_quorum
@@ -1342,7 +1329,7 @@ lemma (in multiPaxosL) multiPaxos_add_promise_prev:
   and lt: "p'0 \<prec> p0"
   and values_eq: "value_promised i0 a0 p0 = value_accepted i0 a0 p'0"
 
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
   multi_promised promised_free
   (%i a p p'. (i,a,p,p') = (i0, a0, p0, p'0) \<or> promised_prev i a p p')
   proposed accepted chosen value_promised value_proposed value_accepted"
@@ -1435,7 +1422,7 @@ lemma (in multiPaxosL) multiPaxos_add_accepted:
   assumes multi_promised_le: "\<And>j p1. multi_promised j a0 p1 \<Longrightarrow> j \<le> i0 \<Longrightarrow> p1 \<preceq> p0"
   assumes proposed_val: "value_accepted i0 a0 p0 = value_proposed i0 p0"
 
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
   multi_promised promised_free promised_prev proposed
   (%i a p. (i,a,p) = (i0, a0, p0) \<or> accepted i a p)
   chosen value_promised value_proposed value_accepted"
@@ -1475,7 +1462,7 @@ qed simp_all
 lemma (in multiPaxosL) multiPaxos_change_value_promised:
   assumes accepted_eq: "\<And> i a p p1. promised_prev i a p p1 \<Longrightarrow> value_promised i a p = value_promised' i a p"
 
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
   multi_promised promised_free promised_prev proposed accepted
   chosen value_promised' value_proposed value_accepted"
 using accepts_proposed accepts_value chosen_Suc chosen_quorum
@@ -1485,12 +1472,13 @@ using accepts_proposed accepts_value chosen_Suc chosen_quorum
   quorum_inter quorum_inter_Suc quorum_nonempty 
   quorums_seq_nonempty assms
 apply (intro multiPaxos_intro_simple)
+
   by simp_all
 
 lemma (in multiPaxosL) multiPaxos_change_value_accepted:
   assumes accepted_eq: "\<And> i a p. accepted i a p \<Longrightarrow> value_accepted i a p = value_accepted' i a p"
 
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
   multi_promised promised_free promised_prev proposed accepted
   chosen value_promised value_proposed value_accepted'"
 using accepts_proposed accepts_value chosen_Suc chosen_quorum
@@ -1536,7 +1524,7 @@ lemma (in multiPaxosL) multiPaxos_intro:
 
   assumes chosen_Suc: "\<And>i. some_chosen' (Suc i) \<Longrightarrow> some_chosen' i"
 
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
   multi_promised promised_free promised_prev proposed accepted chosen'
   value_promised value_proposed' value_accepted"
 using assms promised_free multi_promised promised_prev_accepted promised_prev_prev promised_prev_max
@@ -1573,7 +1561,7 @@ qed (simp_all add: defns)
 
 lemma (in multiPaxosL) multiPaxos_change_value_proposed:
   assumes proposed_eq: "\<And> i p. proposed i p \<Longrightarrow> value_proposed i p = value_proposed' i p"
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
   multi_promised promised_free promised_prev proposed accepted
   chosen value_promised value_proposed' value_accepted"
 proof -
@@ -1620,7 +1608,7 @@ lemma (in multiPaxosL) multiPaxos_add_choice:
 
   defines chosen'_def: "chosen' == (%i p. (i, p) = (i0, p0) \<or> chosen i p)" 
 
-  shows "multiPaxosL lt le quorums_seq topology_version_increment prop_topology_version
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
   multi_promised promised_free promised_prev proposed accepted chosen'
   value_promised value_proposed value_accepted"
 
