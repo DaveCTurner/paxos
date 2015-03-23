@@ -23,6 +23,7 @@ Library
                        Network.Paxos.Synod.Proposer,
                        Network.Paxos.Synod.Acceptor,
                        Network.Paxos.Synod.Learner
+                       Network.Paxos.Multi
   Other-Modules:       Data.Serialize.QuickCheck,
                        Network.Paxos.Synod.Action,
                        Network.Paxos.Synod.Types,
@@ -32,7 +33,10 @@ Library
                        cereal,
                        QuickCheck >= 2,
                        test-framework,
-                       test-framework-quickcheck2
+                       test-framework-quickcheck2,
+                       mtl,
+                       range-map,
+                       time
   Hs-Source-Dirs:      src
   Ghc-Options:         -Wall -fwarn-incomplete-patterns
   Ghc-Prof-Options:    -caf-all -auto-all
