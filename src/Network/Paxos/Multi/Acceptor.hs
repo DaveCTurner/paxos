@@ -9,7 +9,6 @@ module Network.Paxos.Multi.Acceptor where
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Writer
-import Data.Time
 import qualified Data.Map as M
 import qualified Data.RangeMap as RM
 
@@ -18,39 +17,30 @@ import Network.Paxos.Multi.Types
 data AcceptorState q v = AcceptorState
   { accMinAcceptableProposal      :: RM.RangeMap InstanceId ProposalId
   , accLatestAcceptanceByInstance :: M.Map InstanceId (AcceptedValue q v)
-  , accMasterLease                :: Maybe (ProposerId, UTCTime)
   }
-
--- TODO handling master leases could be outside the core
-whenOkProposer :: MonadState (AcceptorState q v) m => UTCTime -> ProposalId -> m () -> m ()
-whenOkProposer t p go = do
-    isOk <- gets $ checkLease . accMasterLease
-    when isOk go
-  where
-  checkLease Nothing = True
-  checkLease (Just (masterPid, expiryTime))
-    = t <= expiryTime  &&  masterPid == pidProposerId p
 
 handlePrepare
   :: (MonadWriter [PromisedMessage q v] m, MonadState (AcceptorState q v) m)
-  => UTCTime -> PrepareMessage -> m ()
-handlePrepare time (Prepare instanceId proposalId MultiPrepare) = whenOkProposer time proposalId $ do
+  => PrepareMessage -> m ()
+handlePrepare (Prepare instanceId proposalId MultiPrepare) = do
 
   acceptances <- acceptancesNotBefore instanceId
 
-  let allAcceptancesBefore = case M.maxViewWithKey acceptances of
+  let instanceGreaterThanAllAcceptances = case M.maxViewWithKey acceptances of
         Nothing                            -> instanceId
         Just ((maxAcceptedInstance, _), _) -> suc maxAcceptedInstance
 
   let pidMap = M.unionWith max
         (M.map Just acceptances)
-        (M.fromAscList [(i, Nothing) | i <- takeWhile (< allAcceptancesBefore) (iterate suc instanceId)])
+        (M.fromAscList
+          [(i, Nothing) | i <- takeWhile (< instanceGreaterThanAllAcceptances) (iterate suc instanceId)])
 
   forM_ (M.toList pidMap) $ \(i, maybeAcceptedProposalValue)
     -> tellPromise i proposalId $ maybe Free boundFromAccepted maybeAcceptedProposalValue
-  tellPromise allAcceptancesBefore proposalId MultiPromise
 
-handlePrepare time (Prepare instanceId proposalId SinglePrepare) = whenOkProposer time proposalId $ do
+  tellPromise instanceGreaterThanAllAcceptances proposalId MultiPromise
+
+handlePrepare (Prepare instanceId proposalId SinglePrepare) = do
   maybeCurrentAcceptance <- gets $ M.lookup instanceId . accLatestAcceptanceByInstance
   tellPromise instanceId proposalId $ maybe Free boundFromAccepted maybeCurrentAcceptance
 
@@ -64,8 +54,8 @@ acceptancesNotBefore instanceId = do
 
 handleProposed
   :: (MonadWriter [AcceptedMessage q v] m, MonadState (AcceptorState q v) m)
-  => UTCTime -> (ProposedMessage q v) -> m ()
-handleProposed time (Proposed instanceId proposalId value) = whenOkProposer time proposalId $ do
+  => (ProposedMessage q v) -> m ()
+handleProposed (Proposed instanceId proposalId value) = do
 
   maybeMinAcceptableProposal <- gets $ RM.lookup instanceId . accMinAcceptableProposal
 
