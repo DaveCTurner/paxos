@@ -11,7 +11,6 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Trans.Maybe
 import Control.Monad.Writer
-import Data.Maybe
 import Data.Time
 import Data.Void
 import qualified Data.Map as M
@@ -58,6 +57,7 @@ data Value q v
   = AlterTopology (Alteration q)
   | SetTopology q
   | MasterLease ProposerId UTCTime
+  | NoOp
   | OtherValue v
 
 instance (Show (Alteration q), Show q, Show v) => Show (Value q v)
@@ -65,6 +65,7 @@ instance (Show (Alteration q), Show q, Show v) => Show (Value q v)
   show (AlterTopology a) = "AlterTopology (" ++ show a ++ ")"
   show (SetTopology q) = "SetTopology (" ++ show q ++ ")"
   show (MasterLease p t) = "MasterLease (" ++ show p ++ ") (" ++ show t ++ ")"
+  show  NoOp = "NoOp"
   show (OtherValue v) = "OtherValue (" ++ show v ++ ")"
 
 data PromiseType     q v = Multi | Free | Bound ProposalId (Value q v)
@@ -90,12 +91,22 @@ instance Ord (AcceptedValue q v) where
 data AcceptorState q v = AcceptorState
   { accMinAcceptableProposal      :: RM.RangeMap InstanceId ProposalId
   , accLatestAcceptanceByInstance :: M.Map InstanceId (AcceptedValue q v)
+  , accMasterLease                :: Maybe (ProposerId, UTCTime)
   }
+
+whenOkProposer :: MonadState (AcceptorState q v) m => UTCTime -> ProposalId -> m () -> m ()
+whenOkProposer t p go = do
+    isOk <- gets $ checkLease . accMasterLease
+    when isOk go
+  where
+  checkLease Nothing = True
+  checkLease (Just (masterPid, expiryTime))
+    = t <= expiryTime  &&  masterPid == pidProposerId p
 
 handlePrepare
   :: (MonadWriter [PromisedMessage q v] m, MonadState (AcceptorState q v) m)
-  => PrepareMessage -> m ()
-handlePrepare (Prepare instanceId proposalId) = do
+  => UTCTime -> PrepareMessage -> m ()
+handlePrepare time (Prepare instanceId proposalId) = whenOkProposer time proposalId $ do
 
   acceptances <- acceptancesNotBefore instanceId
 
@@ -123,16 +134,14 @@ acceptancesNotBefore instanceId = do
 
 handleProposed
   :: (MonadWriter [AcceptedMessage q v] m, MonadState (AcceptorState q v) m)
-  => (ProposedMessage q v) -> m ()
-handleProposed (Proposed instanceId proposalId value) = do
+  => UTCTime -> (ProposedMessage q v) -> m ()
+handleProposed time (Proposed instanceId proposalId value) = whenOkProposer time proposalId $ do
 
   maybeMinAcceptableProposal <- gets $ RM.lookup instanceId . accMinAcceptableProposal
 
   let isAcceptable = case maybeMinAcceptableProposal of
           Nothing -> True
           Just minAcceptableProposal -> minAcceptableProposal <= proposalId
-
-  -- TODO reject proposals from non-master proposer during lease.
 
   when isAcceptable $ tellAccept instanceId proposalId value
 
@@ -163,6 +172,9 @@ data LearnerState q v = LearnerState
   , lnrTopologyForFirstUnchosenInstance        :: q
   , lnrTopologyBeforeFirstUnchosenInstance     :: q
   }
+
+lnrNextInstanceToChoose :: LearnerState q v -> InstanceId
+lnrNextInstanceToChoose = maybe (InstanceId 0) (succ . fst . fst) . M.maxViewWithKey . lnrChosenValues
 
 handleAccepted
   :: (MonadWriter [ChosenMessage q v] m, MonadState (LearnerState q v) m, Quorum q)
@@ -197,7 +209,7 @@ handleAccepted acceptorId (Accepted instanceId proposalId value) = do
                     (lnrLastValueAccepted s)
           }
 
-        oldNextInstanceToChoose <- gets $ maybe (InstanceId 0) (succ . fst . fst) . M.maxViewWithKey . lnrChosenValues
+        oldNextInstanceToChoose <- gets lnrNextInstanceToChoose
         newNextInstanceToChoose <- runLearnerT chooseQuorateValues oldNextInstanceToChoose
         newMinInstanceTopologyVersion <- gets lnrTopologyVersionForFirstUnchosenInstance
 
@@ -291,3 +303,34 @@ tellChosen instanceId proposalId value = do
     = M.insertWith max instanceId (AcceptedValue proposalId value)
       $ lnrChosenValues s }
 
+data InstanceProposerState q v = InstanceProposerState
+  { iprProposalId      :: ProposalId
+  , iprAcceptors       :: S.Set AcceptorId
+  , iprMaxAccepted     :: Maybe (AcceptedValue q v)
+  , iprTopologyVersion :: TopologyVersion
+  , iprTopology        :: q
+  }
+
+data ProposersState q v = ProposersState
+  { pprProposalId          :: ProposalId
+  , pprMinMultiInstance    :: InstanceId
+  , pprTopologyVersion     :: TopologyVersion
+  , pprTopology            :: q
+  , pprProposersByInstance :: M.Map InstanceId (InstanceProposerState q v)
+  }
+
+spawnInstanceProposersTo :: MonadState (ProposersState q v) m => InstanceId -> m ()
+spawnInstanceProposersTo newMinMultiInstance = do
+  oldMinMultiInstance <- gets pprMinMultiInstance
+  forM_ (takeWhile (< newMinMultiInstance) $ iterate succ oldMinMultiInstance) $ \newInstance ->
+    modify $ \s -> s
+      { pprMinMultiInstance = succ newInstance
+      , pprProposersByInstance
+          = M.insert newInstance InstanceProposerState
+                { iprProposalId      = pprProposalId s
+                , iprAcceptors       = S.empty
+                , iprMaxAccepted     = Nothing
+                , iprTopologyVersion = pprTopologyVersion s
+                , iprTopology        = pprTopology s
+                } $ pprProposersByInstance s
+      }
