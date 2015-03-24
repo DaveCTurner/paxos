@@ -2,6 +2,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Network.Paxos.Multi where
 
@@ -49,7 +50,7 @@ instance Quorum MajorityOf where
   noQuorums = MajorityOf S.empty
   isQuorum (MajorityOf voters) s
       = not (S.null voters)
-      && S.size (S.intersection voters s) * 2 > S.size voters 
+      && S.size (S.intersection voters s) * 2 > S.size voters
   alterQuorum (AddAcceptor    a) (MajorityOf vs) = MajorityOf (S.insert a vs)
   alterQuorum (RemoveAcceptor a) (MajorityOf vs) = MajorityOf (S.delete a vs)
 
@@ -97,7 +98,7 @@ handlePrepare
 handlePrepare (Prepare instanceId proposalId) = do
 
   acceptances <- acceptancesNotBefore instanceId
-  
+
   let allAcceptancesBefore = case M.maxViewWithKey acceptances of
         Nothing                            -> instanceId
         Just ((maxAcceptedInstance, _), _) -> succ maxAcceptedInstance
@@ -107,16 +108,16 @@ handlePrepare (Prepare instanceId proposalId) = do
         (M.fromAscList [(i, Nothing) | i <- takeWhile (< allAcceptancesBefore) [instanceId..]])
 
   let mkBound (AcceptedValue p v) = Bound p v
-  
+
   forM_ (M.toList pidMap) $ \(i, maybeAcceptedProposalValue)
     -> tellPromise i proposalId $ maybe Free mkBound maybeAcceptedProposalValue
   tellPromise allAcceptancesBefore proposalId Multi
 
 acceptancesNotBefore :: MonadState (AcceptorState q v) m
   => InstanceId -> m (M.Map InstanceId (AcceptedValue q v))
-acceptancesNotBefore instanceId = do  
+acceptancesNotBefore instanceId = do
   (_, maybeCurrentAcceptance, futureAcceptances)
-    <- gets $ M.splitLookup instanceId . accLatestAcceptanceByInstance 
+    <- gets $ M.splitLookup instanceId . accLatestAcceptanceByInstance
   return $ maybe id (M.insert instanceId) maybeCurrentAcceptance
          $ futureAcceptances
 
@@ -158,7 +159,7 @@ data LearnerState q v = LearnerState
   { lnrAcceptances       :: M.Map InstanceId (M.Map ProposalId (S.Set AcceptorId))
   , lnrLastValueAccepted :: M.Map InstanceId (M.Map ProposalId (Value q v))
   , lnrChosenValues      :: M.Map InstanceId (AcceptedValue q v)
-  , lnrTopologyVersionForFirstUnchosenInstance :: Integer
+  , lnrTopologyVersionForFirstUnchosenInstance :: TopologyVersion
   , lnrTopologyForFirstUnchosenInstance        :: q
   , lnrTopologyBeforeFirstUnchosenInstance     :: q
   }
@@ -176,35 +177,51 @@ handleAccepted acceptorId (Accepted instanceId proposalId value) = do
           $ tellChosen instanceId proposalId chosenValue
 
     Nothing -> do
-      modify $ \s -> s
-        { lnrAcceptances
-            = M.insertWith
-                  (M.unionWith S.union)
-                  instanceId
-                  (M.singleton proposalId $ S.singleton acceptorId)
-                  (lnrAcceptances s)
+      minInstanceTopologyVersion <- gets lnrTopologyVersionForFirstUnchosenInstance
 
-        , lnrLastValueAccepted
-            = M.insertWith
-                  M.union
-                  instanceId
-                  (M.singleton proposalId value)
-                  (lnrLastValueAccepted s)
-        }
+      when (minInstanceTopologyVersion <= succ (pidTopologyVersion proposalId)) $ do
 
-      oldNextInstanceToChoose <- gets $ maybe (InstanceId 0) (succ . fst . fst) . M.maxViewWithKey . lnrChosenValues
-      newNextInstanceToChoose <- chooseQuorateValues oldNextInstanceToChoose
-
-      when (oldNextInstanceToChoose < newNextInstanceToChoose) $ do
-        let tidyMap :: M.Map InstanceId a -> M.Map InstanceId a
-            tidyMap = snd . M.split (pred newNextInstanceToChoose)
         modify $ \s -> s
-          { lnrAcceptances       = tidyMap $ lnrAcceptances s
-          , lnrLastValueAccepted = tidyMap $ lnrLastValueAccepted s
+          { lnrAcceptances
+              = M.insertWith
+                    (M.unionWith S.union)
+                    instanceId
+                    (M.singleton proposalId $ S.singleton acceptorId)
+                    (lnrAcceptances s)
+
+          , lnrLastValueAccepted
+              = M.insertWith
+                    M.union
+                    instanceId
+                    (M.singleton proposalId value)
+                    (lnrLastValueAccepted s)
           }
+
+        oldNextInstanceToChoose <- gets $ maybe (InstanceId 0) (succ . fst . fst) . M.maxViewWithKey . lnrChosenValues
+        newNextInstanceToChoose <- runLearnerT chooseQuorateValues oldNextInstanceToChoose
+        newMinInstanceTopologyVersion <- gets lnrTopologyVersionForFirstUnchosenInstance
+
+        when (oldNextInstanceToChoose < newNextInstanceToChoose) $ do
+
+          let removeOldTopologies :: M.Map ProposalId a -> M.Map ProposalId a
+              removeOldTopologies = M.filterWithKey (\pid _ -> newMinInstanceTopologyVersion <= succ (pidTopologyVersion pid))
+
+              removeChosenInstances :: M.Map InstanceId a -> M.Map InstanceId a
+              removeChosenInstances = snd . M.split (pred newNextInstanceToChoose)
+
+              tidyMap :: M.Map InstanceId (M.Map ProposalId a) -> M.Map InstanceId (M.Map ProposalId a)
+              tidyMap = M.map removeOldTopologies . removeChosenInstances
+
+          modify $ \s -> s
+            { lnrAcceptances       = tidyMap $ lnrAcceptances s
+            , lnrLastValueAccepted = tidyMap $ lnrLastValueAccepted s
+            }
 
 newtype LearnerT m a = LearnerT (MaybeT (StateT InstanceId m) a)
   deriving (Functor, Applicative, Monad)
+
+instance MonadTrans LearnerT where
+  lift = LearnerT . lift . lift
 
 runLearnerT :: Monad m => LearnerT m Void -> InstanceId -> m InstanceId
 runLearnerT (LearnerT go) = execStateT (runMaybeT go)
@@ -218,28 +235,52 @@ advanceInstance = LearnerT $ lift $ modify succ
 exitLearner :: Monad m => LearnerT m a
 exitLearner = LearnerT mzero
 
-chooseQuorateValues :: (MonadWriter [ChosenMessage q v] m, MonadState (LearnerState q v) m)
-  => InstanceId -> m InstanceId
-chooseQuorateValues instanceId = undefined {-do
-  maybeTopologyVersion <- gets $ RM.lookup instanceId . lnrTopologyVersions
-  case maybeTopologyVersion of
-    Nothing -> return instanceId
-    Just tv -> do
-      maybeTopology <- gets $ RM.lookup tv . lnrTopologies
-      case maybeTopology of
-        Nothing -> return instanceId
-        Just isQuorum -> do
-          acceptances <- gets $ M.toList . fromMaybe M.empty . M.lookup instanceId . lnrAcceptances
-          forM_ acceptances $ \(proposalId, acceptanceSet) -> when (isQuorum acceptanceSet) $ do
-            maybeProposalValues <- gets $ M.lookup instanceId . lnrLastValueAccepted
-            case fmap (M.lookup proposalId) maybeProposalValues of
-              Nothing -> return instanceId
-              Just proposalValue -> do
-                tellChosen instanceId proposalId
-                chooseQuorateValues (succ instanceId)
-                -- TODO early exit from loop
+unJust :: Monad m => m (Maybe a) -> LearnerT m a
+unJust mma = lift mma >>= \case
+  Nothing -> exitLearner
+  Just a -> return a
 
--}
+chooseQuorateValues :: (Quorum q, MonadWriter [ChosenMessage q v] m, MonadState (LearnerState q v) m)
+  => LearnerT m a
+chooseQuorateValues = do
+  instanceToChoose <- getNextInstance
+  instanceTopologyVersion <- lift $ gets lnrTopologyVersionForFirstUnchosenInstance
+
+  let lnrQuorum proposalTopologyVersion
+        | instanceTopologyVersion ==       proposalTopologyVersion  = lnrTopologyForFirstUnchosenInstance
+        | instanceTopologyVersion == succ (proposalTopologyVersion) = lnrTopologyBeforeFirstUnchosenInstance
+        | otherwise = const noQuorums
+
+  acceptanceMap <- unJust $ gets $ M.lookup instanceToChoose . lnrAcceptances
+
+  forM_ (M.toList acceptanceMap) $ \(proposalId, acceptorSet) -> do
+    quorum <- lift $ gets $ lnrQuorum $ pidTopologyVersion proposalId
+    when (isQuorum quorum acceptorSet) $ do
+      lastValuesMap <- unJust $ gets   $ M.lookup instanceToChoose . lnrLastValueAccepted
+      chosenValue   <- unJust $ return $ M.lookup proposalId lastValuesMap
+
+      case chosenValue of
+        AlterTopology alteration -> lift $ modify $ \s -> s
+          { lnrTopologyVersionForFirstUnchosenInstance
+            = succ (lnrTopologyVersionForFirstUnchosenInstance s)
+          , lnrTopologyForFirstUnchosenInstance    = alterQuorum alteration (lnrTopologyForFirstUnchosenInstance s)
+          , lnrTopologyBeforeFirstUnchosenInstance = lnrTopologyForFirstUnchosenInstance s
+          }
+
+        SetTopology newTopology -> lift $ modify $ \s -> s
+          { lnrTopologyVersionForFirstUnchosenInstance
+            = succ (succ (lnrTopologyVersionForFirstUnchosenInstance s))
+          , lnrTopologyForFirstUnchosenInstance    = newTopology
+          , lnrTopologyBeforeFirstUnchosenInstance = noQuorums
+          }
+
+        _ -> return ()
+
+      lift $ tellChosen instanceToChoose proposalId chosenValue
+      advanceInstance
+      chooseQuorateValues
+
+  exitLearner
 
 tellChosen
   :: (MonadWriter [ChosenMessage q v] m, MonadState (LearnerState q v) m)
