@@ -11,6 +11,7 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Trans.Maybe
 import Control.Monad.Writer
+import Data.Maybe
 import Data.Time
 import Data.Void
 import qualified Data.Map as M
@@ -328,16 +329,50 @@ data ProposersState q v = ProposersState
   { pprProposalId          :: ProposalId
   , pprMinMultiInstance    :: InstanceId
   , pprPromises            :: S.Set AcceptorId
-  , pprTopologyVersion     :: TopologyVersion
   , pprTopology            :: q
   , pprProposersByInstance :: M.Map InstanceId (InstanceProposerState q v)
   }
 
 handleChosen
-  :: (MonadState (ProposersState q v) m)
-  => InstanceId -> TopologyVersion -> q -> m (Maybe ProposalId)
-handleChosen instanceId topologyVersion topology = do
-  return Nothing
+  :: (MonadState (ProposersState q v) m, MonadWriter [PrepareMessage] m)
+  => InstanceId -> TopologyVersion -> q -> m ()
+handleChosen instanceId topologyVersion topology = removeChosenInstances >> bumpProposalTopologies
+  where
+  
+  removeChosenInstances = do
+    minMultiInstance <- gets pprMinMultiInstance
+    modify $ \s -> if minMultiInstance <= instanceId
+      then s { pprMinMultiInstance = succ instanceId
+             , pprProposersByInstance = M.empty }
+      else s { pprProposersByInstance = snd $ M.split instanceId $ pprProposersByInstance s }
+
+  bumpProposalTopologies = do
+    oldProposalId <- gets pprProposalId
+    let newProposalId = oldProposalId
+                            { pidTopologyVersion = topologyVersion
+                            , pidProposal        = ProposalNumber 0
+                            }
+    when (oldProposalId < newProposalId) $ do
+
+      let updateInstanceState ipr = ipr
+              { iprProposalId    = newProposalId
+              , iprPromisesState = CollectingPromises
+                  { cprPromises    = S.empty
+                  , cprMaxAccepted = Nothing
+                  }
+              }
+
+      modify $ \s -> s
+        { pprProposalId          = newProposalId
+        , pprPromises            = S.empty
+        , pprTopology            = topology
+        , pprProposersByInstance = M.map updateInstanceState $ pprProposersByInstance s
+        }
+
+      maybeMinInstance <- gets $ fmap (fst . fst) . M.minViewWithKey . pprProposersByInstance
+      minMultiInstance <- gets pprMinMultiInstance
+
+      tell [Prepare (fromMaybe minMultiInstance maybeMinInstance) newProposalId]
 
 spawnInstanceProposersTo :: (Quorum q, MonadState (ProposersState q v) m) => InstanceId -> m ()
 spawnInstanceProposersTo newMinMultiInstance = do
