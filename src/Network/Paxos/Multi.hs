@@ -77,6 +77,9 @@ data ChosenMessage   q v = Chosen   InstanceId (Value q v)
 
 data AcceptedValue q v = AcceptedValue ProposalId (Value q v)
 
+valueFromAccepted :: AcceptedValue q v -> Value q v
+valueFromAccepted (AcceptedValue _ v) = v
+
 instance Eq (AcceptedValue q v) where
   AcceptedValue p1 _ == AcceptedValue p2 _ = p1 == p2
   AcceptedValue p1 _ /= AcceptedValue p2 _ = p1 /= p2
@@ -94,6 +97,7 @@ data AcceptorState q v = AcceptorState
   , accMasterLease                :: Maybe (ProposerId, UTCTime)
   }
 
+-- TODO handling master leases could be outside the core
 whenOkProposer :: MonadState (AcceptorState q v) m => UTCTime -> ProposalId -> m () -> m ()
 whenOkProposer t p go = do
     isOk <- gets $ checkLease . accMasterLease
@@ -184,6 +188,7 @@ handleAccepted acceptorId (Accepted instanceId proposalId value) = do
   maybeChosenValue <- gets $ M.lookup instanceId . lnrChosenValues
 
   case maybeChosenValue of
+    -- TODO this could be outside the core
     Just (AcceptedValue chosenProposal chosenValue)
       -> when (chosenProposal < proposalId)
           $ tellChosen instanceId proposalId chosenValue
@@ -211,6 +216,8 @@ handleAccepted acceptorId (Accepted instanceId proposalId value) = do
 
         oldNextInstanceToChoose <- gets lnrNextInstanceToChoose
         newNextInstanceToChoose <- runLearnerT chooseQuorateValues oldNextInstanceToChoose
+
+        -- TODO the rest of this could be outside the core
         newMinInstanceTopologyVersion <- gets lnrTopologyVersionForFirstUnchosenInstance
 
         when (oldNextInstanceToChoose < newNextInstanceToChoose) $ do
@@ -303,10 +310,18 @@ tellChosen instanceId proposalId value = do
     = M.insertWith max instanceId (AcceptedValue proposalId value)
       $ lnrChosenValues s }
 
+data PromisesState q v
+  = CollectingPromises
+    { cprPromises :: S.Set AcceptorId
+    , cprMaxAccepted :: Maybe (AcceptedValue q v)
+    }
+  | ReadyToPropose
+  | ValueProposed
+
 data InstanceProposerState q v = InstanceProposerState
   { iprProposalId      :: ProposalId
-  , iprAcceptors       :: S.Set AcceptorId
-  , iprMaxAccepted     :: Maybe (AcceptedValue q v)
+  , iprValue           :: Maybe (Value q v)
+  , iprPromisesState   :: PromisesState q v
   , iprTopologyVersion :: TopologyVersion
   , iprTopology        :: q
   }
@@ -314,6 +329,7 @@ data InstanceProposerState q v = InstanceProposerState
 data ProposersState q v = ProposersState
   { pprProposalId          :: ProposalId
   , pprMinMultiInstance    :: InstanceId
+  , pprPromises            :: S.Set AcceptorId
   , pprTopologyVersion     :: TopologyVersion
   , pprTopology            :: q
   , pprProposersByInstance :: M.Map InstanceId (InstanceProposerState q v)
@@ -328,9 +344,76 @@ spawnInstanceProposersTo newMinMultiInstance = do
       , pprProposersByInstance
           = M.insert newInstance InstanceProposerState
                 { iprProposalId      = pprProposalId s
-                , iprAcceptors       = S.empty
-                , iprMaxAccepted     = Nothing
+                , iprValue           = Nothing
+                , iprPromisesState   = CollectingPromises
+                    { cprPromises = pprPromises s
+                    , cprMaxAccepted = Nothing
+                    } -- TODO check for quorum here too
                 , iprTopologyVersion = pprTopologyVersion s
                 , iprTopology        = pprTopology s
                 } $ pprProposersByInstance s
       }
+
+handlePromise
+  :: (MonadState (ProposersState q v) m, MonadWriter [ProposedMessage q v] m, Quorum q)
+  => AcceptorId -> PromisedMessage q v -> m ()
+handlePromise acceptorId (Promised instanceId proposalId Multi) = do
+  spawnInstanceProposersTo instanceId
+  minMultiInstance <- gets pprMinMultiInstance
+  forM_ (takeWhile (< minMultiInstance) $ iterate succ instanceId) $ \existingInstance
+    -> handlePromise acceptorId (Promised existingInstance proposalId Free)
+
+  multiProposalId <- gets pprProposalId
+  when (proposalId == multiProposalId) $ modify $ \s -> s { pprPromises = S.insert acceptorId $ pprPromises s }
+
+handlePromise acceptorId (Promised instanceId proposalId Free) =
+  handleIndividualPromise acceptorId instanceId proposalId Nothing
+
+handlePromise acceptorId (Promised instanceId proposalId (Bound previousProposal value)) =
+  handleIndividualPromise acceptorId instanceId proposalId (Just $ AcceptedValue previousProposal value)
+
+handleIndividualPromise
+  :: (MonadState (ProposersState q v) m, MonadWriter [ProposedMessage q v] m, Quorum q)
+  => AcceptorId -> InstanceId -> ProposalId -> Maybe (AcceptedValue q v) -> m ()
+handleIndividualPromise acceptorId instanceId proposalId maybeAcceptedValue = do
+  spawnInstanceProposersTo $ succ instanceId
+  maybeInstanceProposerState <- gets $ M.lookup instanceId . pprProposersByInstance
+  case maybeInstanceProposerState of
+
+    Nothing -> return () -- Instance is obsolete
+
+    Just ipr -> when (iprProposalId ipr == proposalId
+                      && pidTopologyVersion proposalId <= iprTopologyVersion ipr) $ do
+
+      -- Hmm - topology stuff doesn't look right.
+
+      let (newState, newMaxAccepted) = case iprPromisesState ipr of
+
+            CollectingPromises{..} -> let
+                newPromises = S.insert acceptorId cprPromises
+                newCprMaxAccepted = max cprMaxAccepted maybeAcceptedValue
+                in (if isQuorum (iprTopology ipr) newPromises
+                    then ReadyToPropose
+                    else CollectingPromises
+                          { cprPromises = newPromises
+                          , cprMaxAccepted = newCprMaxAccepted
+                          }, newCprMaxAccepted)
+
+            otherState -> (otherState, Nothing)
+
+      newerState <- proposeIfReady instanceId proposalId newState
+          $ fmap valueFromAccepted newMaxAccepted <|> iprValue ipr
+
+      modify $ \s -> s
+        { pprProposersByInstance = M.insert instanceId ipr
+            { iprPromisesState = newerState }
+            $ pprProposersByInstance s
+        }
+
+proposeIfReady :: MonadWriter [ProposedMessage q v] m
+  => InstanceId -> ProposalId -> PromisesState q v -> Maybe (Value q v) -> m (PromisesState q v)
+proposeIfReady instanceId proposalId ReadyToPropose (Just value) = do
+  tell [Proposed instanceId proposalId value]
+  return ValueProposed
+
+proposeIfReady _ _ otherState _ = return otherState
