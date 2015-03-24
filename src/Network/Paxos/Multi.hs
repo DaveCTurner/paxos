@@ -69,8 +69,9 @@ instance (Show (Alteration q), Show q, Show v) => Show (Value q v)
   show  NoOp = "NoOp"
   show (OtherValue v) = "OtherValue (" ++ show v ++ ")"
 
+data PrepareType         = MultiPrepare | SinglePrepare
 data PromiseType     q v = Multi | Free | Bound ProposalId (Value q v)
-data PrepareMessage      = Prepare  InstanceId ProposalId
+data PrepareMessage      = Prepare  InstanceId ProposalId PrepareType
 data PromisedMessage q v = Promised InstanceId ProposalId (PromiseType q v)
 data ProposedMessage q v = Proposed InstanceId ProposalId (Value q v)
 data AcceptedMessage q v = Accepted InstanceId ProposalId (Value q v)
@@ -108,10 +109,13 @@ whenOkProposer t p go = do
   checkLease (Just (masterPid, expiryTime))
     = t <= expiryTime  &&  masterPid == pidProposerId p
 
+boundFromAccepted :: AcceptedValue q v -> PromiseType q v
+boundFromAccepted (AcceptedValue p v) = Bound p v
+
 handlePrepare
   :: (MonadWriter [PromisedMessage q v] m, MonadState (AcceptorState q v) m)
   => UTCTime -> PrepareMessage -> m ()
-handlePrepare time (Prepare instanceId proposalId) = whenOkProposer time proposalId $ do
+handlePrepare time (Prepare instanceId proposalId MultiPrepare) = whenOkProposer time proposalId $ do
 
   acceptances <- acceptancesNotBefore instanceId
 
@@ -123,11 +127,13 @@ handlePrepare time (Prepare instanceId proposalId) = whenOkProposer time proposa
         (M.map Just acceptances)
         (M.fromAscList [(i, Nothing) | i <- takeWhile (< allAcceptancesBefore) [instanceId..]])
 
-  let mkBound (AcceptedValue p v) = Bound p v
-
   forM_ (M.toList pidMap) $ \(i, maybeAcceptedProposalValue)
-    -> tellPromise i proposalId $ maybe Free mkBound maybeAcceptedProposalValue
+    -> tellPromise i proposalId $ maybe Free boundFromAccepted maybeAcceptedProposalValue
   tellPromise allAcceptancesBefore proposalId Multi
+
+handlePrepare time (Prepare instanceId proposalId SinglePrepare) = whenOkProposer time proposalId $ do
+  maybeCurrentAcceptance <- gets $ M.lookup instanceId . accLatestAcceptanceByInstance
+  tellPromise instanceId proposalId $ maybe Free boundFromAccepted maybeCurrentAcceptance
 
 acceptancesNotBefore :: MonadState (AcceptorState q v) m
   => InstanceId -> m (M.Map InstanceId (AcceptedValue q v))
@@ -372,7 +378,7 @@ handleChosen instanceId topologyVersion topology = removeChosenInstances >> bump
       maybeMinInstance <- gets $ fmap (fst . fst) . M.minViewWithKey . pprProposersByInstance
       minMultiInstance <- gets pprMinMultiInstance
 
-      tell [Prepare (fromMaybe minMultiInstance maybeMinInstance) newProposalId]
+      tell [Prepare (fromMaybe minMultiInstance maybeMinInstance) newProposalId MultiPrepare]
 
 spawnInstanceProposersTo :: (Quorum q, MonadState (ProposersState q v) m) => InstanceId -> m ()
 spawnInstanceProposersTo newMinMultiInstance = do
