@@ -57,7 +57,6 @@ instance Quorum MajorityOf where
 data Value q v
   = AlterTopology (Alteration q)
   | SetTopology q
-  | MasterLease ProposerId UTCTime
   | NoOp
   | OtherValue v
 
@@ -65,12 +64,11 @@ instance (Show (Alteration q), Show q, Show v) => Show (Value q v)
   where
   show (AlterTopology a) = "AlterTopology (" ++ show a ++ ")"
   show (SetTopology q) = "SetTopology (" ++ show q ++ ")"
-  show (MasterLease p t) = "MasterLease (" ++ show p ++ ") (" ++ show t ++ ")"
   show  NoOp = "NoOp"
   show (OtherValue v) = "OtherValue (" ++ show v ++ ")"
 
 data PrepareType         = MultiPrepare | SinglePrepare
-data PromiseType     q v = Multi | Free | Bound ProposalId (Value q v)
+data PromiseType     q v = MultiPromise | Free | Bound ProposalId (Value q v)
 data PrepareMessage      = Prepare  InstanceId ProposalId PrepareType
 data PromisedMessage q v = Promised InstanceId ProposalId (PromiseType q v)
 data ProposedMessage q v = Proposed InstanceId ProposalId (Value q v)
@@ -129,7 +127,7 @@ handlePrepare time (Prepare instanceId proposalId MultiPrepare) = whenOkProposer
 
   forM_ (M.toList pidMap) $ \(i, maybeAcceptedProposalValue)
     -> tellPromise i proposalId $ maybe Free boundFromAccepted maybeAcceptedProposalValue
-  tellPromise allAcceptancesBefore proposalId Multi
+  tellPromise allAcceptancesBefore proposalId MultiPromise
 
 handlePrepare time (Prepare instanceId proposalId SinglePrepare) = whenOkProposer time proposalId $ do
   maybeCurrentAcceptance <- gets $ M.lookup instanceId . accLatestAcceptanceByInstance
@@ -163,7 +161,7 @@ tellPromise i p t = do
   let msg = Promised i p t
   tell [msg]
   let promiseRange = case t of
-        Multi -> RM.inclusiveUnbounded i
+        MultiPromise -> RM.inclusiveUnbounded i
         _     -> RM.inclusiveInclusive i i
   modify $ \s -> s { accMinAcceptableProposal = RM.insertWith max promiseRange p $ accMinAcceptableProposal s }
 
@@ -404,7 +402,7 @@ spawnInstanceProposersTo newMinMultiInstance = do
 handlePromise
   :: (MonadState (ProposersState q v) m, MonadWriter [ProposedMessage q v] m, Quorum q)
   => AcceptorId -> PromisedMessage q v -> m ()
-handlePromise acceptorId (Promised instanceId proposalId Multi) = do
+handlePromise acceptorId (Promised instanceId proposalId MultiPromise) = do
   spawnInstanceProposersTo instanceId
   minMultiInstance <- gets pprMinMultiInstance
   forM_ (takeWhile (< minMultiInstance) $ iterate succ instanceId) $ \existingInstance
