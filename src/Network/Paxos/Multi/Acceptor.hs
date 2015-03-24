@@ -4,7 +4,17 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE LambdaCase #-}
 
-module Network.Paxos.Multi.Acceptor where
+{-| Implementation of a single acceptor. A quorum of acceptors is required to
+choose a value. -}
+
+module Network.Paxos.Multi.Acceptor
+  ( AcceptorState
+  , initialAcceptorState
+  , handlePrepare
+  , handleProposed
+  , archiveUpToInstance
+  )
+ where
 
 import Control.Monad.Reader
 import Control.Monad.State
@@ -41,11 +51,22 @@ May not update value_accepted instanceId proposalId after sending
 
 -}
 
+{-| The state of an individual acceptor. -}
 data AcceptorState q v = AcceptorState
   { accMinAcceptableProposal      :: RM.RangeMap InstanceId ProposalId
   , accLatestAcceptanceByInstance :: M.Map InstanceId (AcceptedValue q v)
   }
 
+{-| The initial state of an individual acceptor, before it has processed any messages. -}
+initialAcceptorState :: AcceptorState q v
+initialAcceptorState = AcceptorState
+  { accMinAcceptableProposal      = RM.empty
+  , accLatestAcceptanceByInstance = M.empty
+  }
+
+{-| Handle a 'PrepareMessage', which may result in some 'PromisedMessage'
+outputs that should be sent to the proposer that originally sent the
+'PrepareMessage'. -}
 handlePrepare
   :: (MonadWriter [PromisedMessage q v] m, MonadState (AcceptorState q v) m)
   => PrepareMessage -> m ()
@@ -79,6 +100,8 @@ acceptancesNotBefore instanceId = do
   return $ maybe id (M.insert instanceId) maybeCurrentAcceptance
          $ futureAcceptances
 
+{-| Handle a 'ProposedMessage', which may result in an 'AcceptedMessage' output
+that should be broadcast to all learners. -}
 handleProposed
   :: (MonadWriter [AcceptedMessage q v] m, MonadState (AcceptorState q v) m)
   => (ProposedMessage q v) -> m ()
@@ -110,3 +133,17 @@ tellAccept i p v = do
   tell [Accepted i p v]
   modify $ \s -> s { accLatestAcceptanceByInstance
       = M.insertWith max i (AcceptedValue p v) $ accLatestAcceptanceByInstance s }
+
+{-| Clear out state pertaining to instances that have been chosen and whose
+results are /reliably/ stored elsewhere. After calling @archiveUpToInstance
+instanceId@, the acceptor /must/ receive no further messages that relate to
+instances @<= instanceId@. This means that any learner that has not learned all
+the values chosen in instances @<= instanceId@ will be unable to proceed
+without restarting. -}
+archiveUpToInstance :: MonadState (AcceptorState q v) m => InstanceId -> m ()
+archiveUpToInstance instanceId  = modify $ \s -> s  
+  { accMinAcceptableProposal = RM.delete (RM.unboundedInclusive instanceId)
+        $ accMinAcceptableProposal s
+  , accLatestAcceptanceByInstance = snd $ M.split instanceId
+        $ accLatestAcceptanceByInstance s
+  }

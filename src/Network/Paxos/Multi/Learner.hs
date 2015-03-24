@@ -4,7 +4,18 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE LambdaCase #-}
 
-module Network.Paxos.Multi.Learner where
+{-| Implementation of a learner, which collects each 'AcceptedMessage' it
+receives until it has a quorum. -}
+
+module Network.Paxos.Multi.Learner
+  ( LearnerState
+  , initialLearnerState
+  , joiningLearnerState
+  , nextInstance
+  , nextInstanceTopology
+  , nextInstanceTopologyVersion
+  , handleAccepted
+  ) where
 
 import Control.Applicative
 import Control.Monad.Reader
@@ -17,6 +28,7 @@ import qualified Data.Set as S
 
 import Network.Paxos.Multi.Types
 
+{-| The state of an individual learner. -}
 data LearnerState q v = LearnerState
   { lnrAcceptances       :: M.Map InstanceId (M.Map ProposalId (S.Set AcceptorId))
   , lnrLastValueAccepted :: M.Map InstanceId (M.Map ProposalId (Value q v))
@@ -26,9 +38,46 @@ data LearnerState q v = LearnerState
   , lnrTopologyBeforeFirstUnchosenInstance     :: q
   }
 
-lnrNextInstanceToChoose :: LearnerState q v -> InstanceId
-lnrNextInstanceToChoose = maybe (InstanceId 0) (suc . fst . fst) . M.maxViewWithKey . lnrChosenValues
+{-| The initial state of an individual learner, before it has processed any
+messages and before any values have been chosen. -}
+initialLearnerState :: Quorum q => TopologyVersion -> q -> LearnerState q v
+initialLearnerState v q = LearnerState
+  { lnrAcceptances       = M.empty
+  , lnrLastValueAccepted = M.empty
+  , lnrChosenValues      = M.empty
+  , lnrTopologyVersionForFirstUnchosenInstance = v
+  , lnrTopologyForFirstUnchosenInstance        = q
+  , lnrTopologyBeforeFirstUnchosenInstance     = noQuorums
+  }
 
+{-| The starting state of a learner which joins the cluster after it has been
+running for a while, so the initial sequence of values has been chosen. It only
+needs to know the most recent value and the current and previous topologies.
+-}
+joiningLearnerState :: InstanceId -> AcceptedValue q v -> TopologyVersion -> q -> q -> LearnerState q v
+joiningLearnerState i a v qCurrent qPrevious = LearnerState
+  { lnrAcceptances       = M.empty
+  , lnrLastValueAccepted = M.empty
+  , lnrChosenValues      = M.singleton i a
+  , lnrTopologyVersionForFirstUnchosenInstance = v
+  , lnrTopologyForFirstUnchosenInstance        = qCurrent
+  , lnrTopologyBeforeFirstUnchosenInstance     = qPrevious
+  }
+
+{-| Get the value of the first instance whose value has not yet been learned. -}
+nextInstance :: LearnerState q v -> InstanceId
+nextInstance = maybe (InstanceId 0) (suc . fst . fst) . M.maxViewWithKey . lnrChosenValues
+
+{-| Get the topology of the first instance whose value has not yet been learned. -}
+nextInstanceTopology :: LearnerState q v -> q
+nextInstanceTopology = lnrTopologyForFirstUnchosenInstance
+
+{-| Get the topology version of the first instance whose value has not yet been learned. -}
+nextInstanceTopologyVersion :: LearnerState q v -> TopologyVersion
+nextInstanceTopologyVersion = lnrTopologyVersionForFirstUnchosenInstance
+
+{-| Handle an 'AcceptedMessage', which may result in a 'ChosenMessage' indicating that a value
+has been chosen. -}
 handleAccepted
   :: (MonadWriter [ChosenMessage q v] m, MonadState (LearnerState q v) m, Quorum q)
   => AcceptorId -> AcceptedMessage q v -> m ()
@@ -63,7 +112,7 @@ handleAccepted acceptorId (Accepted instanceId proposalId value) = do
                     (lnrLastValueAccepted s)
           }
 
-        oldNextInstanceToChoose <- gets lnrNextInstanceToChoose
+        oldNextInstanceToChoose <- gets nextInstance
         newNextInstanceToChoose <- runLearnerT chooseQuorateValues oldNextInstanceToChoose
 
         -- TODO the rest of this could be outside the core
