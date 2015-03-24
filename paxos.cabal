@@ -36,6 +36,8 @@ Library
                        test-framework-quickcheck2,
                        mtl,
                        range-map,
+                       transformers,
+                       void,
                        time
   Hs-Source-Dirs:      src
   Ghc-Options:         -Wall -fwarn-incomplete-patterns

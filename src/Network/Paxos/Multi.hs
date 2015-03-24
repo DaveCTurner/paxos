@@ -1,16 +1,21 @@
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Network.Paxos.Multi where
 
+import Control.Applicative
 import Control.Monad.Reader
-import Control.Monad.Writer
 import Control.Monad.State
+import Control.Monad.Trans.Maybe
+import Control.Monad.Writer
+import Data.Maybe
+import Data.Time
+import Data.Void
 import qualified Data.Map as M
 import qualified Data.RangeMap as RM
 import qualified Data.Set as S
-import Data.Time
 
 newtype InstanceId = InstanceId Integer deriving (Show, Eq, Ord, Enum)
 newtype TopologyVersion = TopologyVersion Integer deriving (Show, Eq, Ord, Enum)
@@ -25,57 +30,69 @@ data ProposalId = ProposalId
   , pidProposerId      :: ProposerId
   } deriving (Show, Eq, Ord)
 
-data Value v
-  = AddAcceptor AcceptorId
-  | DelAcceptor AcceptorId
-  | CommitTopologyChange
+class Quorum q where
+  type Alteration q
+
+  noQuorums :: q
+  isQuorum :: q -> S.Set AcceptorId -> Bool
+  alterQuorum :: Alteration q -> q -> q
+
+data MajorityOf = MajorityOf (S.Set AcceptorId)
+  deriving (Show, Eq)
+
+data MajorityAlteration = AddAcceptor AcceptorId | RemoveAcceptor AcceptorId
+  deriving (Show, Eq)
+
+instance Quorum MajorityOf where
+  type Alteration MajorityOf = MajorityAlteration
+
+  noQuorums = MajorityOf S.empty
+  isQuorum (MajorityOf voters) s
+      = not (S.null voters)
+      && S.size (S.intersection voters s) * 2 > S.size voters 
+  alterQuorum (AddAcceptor    a) (MajorityOf vs) = MajorityOf (S.insert a vs)
+  alterQuorum (RemoveAcceptor a) (MajorityOf vs) = MajorityOf (S.delete a vs)
+
+data Value q v
+  = AlterTopology (Alteration q)
+  | SetTopology q
   | MasterLease ProposerId UTCTime
   | OtherValue v
-  deriving (Show, Eq, Ord)
 
-data PromiseType v = Multi | Free | Bound ProposalId (Value v)
-  deriving (Show, Eq, Ord)
+instance (Show (Alteration q), Show q, Show v) => Show (Value q v)
+  where
+  show (AlterTopology a) = "AlterTopology (" ++ show a ++ ")"
+  show (SetTopology q) = "SetTopology (" ++ show q ++ ")"
+  show (MasterLease p t) = "MasterLease (" ++ show p ++ ") (" ++ show t ++ ")"
+  show (OtherValue v) = "OtherValue (" ++ show v ++ ")"
 
-data PrepareMessage
-  = Prepare  InstanceId ProposalId
-  deriving (Show, Eq, Ord)
+data PromiseType     q v = Multi | Free | Bound ProposalId (Value q v)
+data PrepareMessage      = Prepare  InstanceId ProposalId
+data PromisedMessage q v = Promised InstanceId ProposalId (PromiseType q v)
+data ProposedMessage q v = Proposed InstanceId ProposalId (Value q v)
+data AcceptedMessage q v = Accepted InstanceId ProposalId (Value q v)
+data ChosenMessage   q v = Chosen   InstanceId (Value q v)
 
-data PromisedMessage v
-  = Promised InstanceId ProposalId (PromiseType v)
-  deriving (Show, Eq, Ord)
+data AcceptedValue q v = AcceptedValue ProposalId (Value q v)
 
-data ProposedMessage v
-  = Proposed InstanceId ProposalId (Value v)
-  deriving (Show, Eq, Ord)
-
-data AcceptedMessage v
-  = Accepted InstanceId ProposalId (Value v)
-  deriving (Show, Eq, Ord)
-
-data ChosenMessage v
-  = Chosen   InstanceId (Value v)
-  deriving (Show, Eq, Ord)
-
-data AcceptedValue v = AcceptedValue ProposalId (Value v)
-
-instance Eq (AcceptedValue v) where
+instance Eq (AcceptedValue q v) where
   AcceptedValue p1 _ == AcceptedValue p2 _ = p1 == p2
   AcceptedValue p1 _ /= AcceptedValue p2 _ = p1 /= p2
 
-instance Ord (AcceptedValue v) where
+instance Ord (AcceptedValue q v) where
   AcceptedValue p1 _ <= AcceptedValue p2 _ = p1 <= p2
   AcceptedValue p1 _ <  AcceptedValue p2 _ = p1 <  p2
   AcceptedValue p1 _ >= AcceptedValue p2 _ = p1 >= p2
   AcceptedValue p1 _ >  AcceptedValue p2 _ = p1 >  p2
   compare (AcceptedValue p1 _) (AcceptedValue p2 _) = compare p1 p2
 
-data AcceptorState v = AcceptorState
+data AcceptorState q v = AcceptorState
   { accMinAcceptableProposal      :: RM.RangeMap InstanceId ProposalId
-  , accLatestAcceptanceByInstance :: M.Map InstanceId (AcceptedValue v)
+  , accLatestAcceptanceByInstance :: M.Map InstanceId (AcceptedValue q v)
   }
 
 handlePrepare
-  :: (MonadWriter [PromisedMessage v] m, MonadState (AcceptorState v) m)
+  :: (MonadWriter [PromisedMessage q v] m, MonadState (AcceptorState q v) m)
   => PrepareMessage -> m ()
 handlePrepare (Prepare instanceId proposalId) = do
 
@@ -95,8 +112,8 @@ handlePrepare (Prepare instanceId proposalId) = do
     -> tellPromise i proposalId $ maybe Free mkBound maybeAcceptedProposalValue
   tellPromise allAcceptancesBefore proposalId Multi
 
-acceptancesNotBefore :: MonadState (AcceptorState v) m
-  => InstanceId -> m (M.Map InstanceId (AcceptedValue v))
+acceptancesNotBefore :: MonadState (AcceptorState q v) m
+  => InstanceId -> m (M.Map InstanceId (AcceptedValue q v))
 acceptancesNotBefore instanceId = do  
   (_, maybeCurrentAcceptance, futureAcceptances)
     <- gets $ M.splitLookup instanceId . accLatestAcceptanceByInstance 
@@ -104,8 +121,8 @@ acceptancesNotBefore instanceId = do
          $ futureAcceptances
 
 handleProposed
-  :: (MonadWriter [AcceptedMessage v] m, MonadState (AcceptorState v) m)
-  => (ProposedMessage v) -> m ()
+  :: (MonadWriter [AcceptedMessage q v] m, MonadState (AcceptorState q v) m)
+  => (ProposedMessage q v) -> m ()
 handleProposed (Proposed instanceId proposalId value) = do
 
   maybeMinAcceptableProposal <- gets $ RM.lookup instanceId . accMinAcceptableProposal
@@ -119,8 +136,8 @@ handleProposed (Proposed instanceId proposalId value) = do
   when isAcceptable $ tellAccept instanceId proposalId value
 
 tellPromise
-  :: (MonadWriter [PromisedMessage v] m, MonadState (AcceptorState v) m)
-  => InstanceId -> ProposalId -> (PromiseType v) -> m ()
+  :: (MonadWriter [PromisedMessage q v] m, MonadState (AcceptorState q v) m)
+  => InstanceId -> ProposalId -> (PromiseType q v) -> m ()
 tellPromise i p t = do
   let msg = Promised i p t
   tell [msg]
@@ -130,24 +147,25 @@ tellPromise i p t = do
   modify $ \s -> s { accMinAcceptableProposal = RM.insertWith max promiseRange p $ accMinAcceptableProposal s }
 
 tellAccept
-  :: (MonadWriter [AcceptedMessage v] m, MonadState (AcceptorState v) m)
-  => InstanceId -> ProposalId -> Value v -> m ()
+  :: (MonadWriter [AcceptedMessage q v] m, MonadState (AcceptorState q v) m)
+  => InstanceId -> ProposalId -> Value q v -> m ()
 tellAccept i p v = do
   tell [Accepted i p v]
   modify $ \s -> s { accLatestAcceptanceByInstance
       = M.insertWith max i (AcceptedValue p v) $ accLatestAcceptanceByInstance s }
 
-data LearnerState v = LearnerState
+data LearnerState q v = LearnerState
   { lnrAcceptances       :: M.Map InstanceId (M.Map ProposalId (S.Set AcceptorId))
-  , lnrLastValueAccepted :: M.Map InstanceId (M.Map ProposalId (Value v))
-  , lnrTopologies        :: RM.RangeMap Integer (S.Set AcceptorId -> Bool)
-  , lnrTopologyVersions  :: RM.RangeMap InstanceId Integer
-  , lnrChosenValues      :: M.Map InstanceId (AcceptedValue v)
+  , lnrLastValueAccepted :: M.Map InstanceId (M.Map ProposalId (Value q v))
+  , lnrChosenValues      :: M.Map InstanceId (AcceptedValue q v)
+  , lnrTopologyVersionForFirstUnchosenInstance :: Integer
+  , lnrTopologyForFirstUnchosenInstance        :: q
+  , lnrTopologyBeforeFirstUnchosenInstance     :: q
   }
 
 handleAccepted
-  :: (MonadWriter [ChosenMessage v] m, MonadState (LearnerState v) m)
-  => AcceptorId -> AcceptedMessage v -> m ()
+  :: (MonadWriter [ChosenMessage q v] m, MonadState (LearnerState q v) m, Quorum q)
+  => AcceptorId -> AcceptedMessage q v -> m ()
 handleAccepted acceptorId (Accepted instanceId proposalId value) = do
 
   maybeChosenValue <- gets $ M.lookup instanceId . lnrChosenValues
@@ -178,21 +196,31 @@ handleAccepted acceptorId (Accepted instanceId proposalId value) = do
       newNextInstanceToChoose <- chooseQuorateValues oldNextInstanceToChoose
 
       when (oldNextInstanceToChoose < newNextInstanceToChoose) $ do
-        let tidyMap = snd . M.split (pred newNextInstanceToChoose)
+        let tidyMap :: M.Map InstanceId a -> M.Map InstanceId a
+            tidyMap = snd . M.split (pred newNextInstanceToChoose)
         modify $ \s -> s
           { lnrAcceptances       = tidyMap $ lnrAcceptances s
           , lnrLastValueAccepted = tidyMap $ lnrLastValueAccepted s
-          , lnrTopologies        = ($ lnrTopologies s)
-              $ case RM.lookup newNextInstanceToChoose (lnrTopologyVersions s) of
-                  Nothing -> id
-                  Just tv -> RM.delete (RM.unboundedExclusive tv)
-          , lnrTopologyVersions  = RM.delete (RM.unboundedExclusive newNextInstanceToChoose)
-              $ lnrTopologyVersions s
           }
 
-chooseQuorateValues :: (MonadWriter [ChosenMessage v] m, MonadState (LearnerState v) m)
+newtype LearnerT m a = LearnerT (MaybeT (StateT InstanceId m) a)
+  deriving (Functor, Applicative, Monad)
+
+runLearnerT :: Monad m => LearnerT m Void -> InstanceId -> m InstanceId
+runLearnerT (LearnerT go) = execStateT (runMaybeT go)
+
+getNextInstance :: Monad m => LearnerT m InstanceId
+getNextInstance = LearnerT $ lift get
+
+advanceInstance :: Monad m => LearnerT m ()
+advanceInstance = LearnerT $ lift $ modify succ
+
+exitLearner :: Monad m => LearnerT m a
+exitLearner = LearnerT mzero
+
+chooseQuorateValues :: (MonadWriter [ChosenMessage q v] m, MonadState (LearnerState q v) m)
   => InstanceId -> m InstanceId
-chooseQuorateValues instanceId = do
+chooseQuorateValues instanceId = undefined {-do
   maybeTopologyVersion <- gets $ RM.lookup instanceId . lnrTopologyVersions
   case maybeTopologyVersion of
     Nothing -> return instanceId
@@ -211,13 +239,14 @@ chooseQuorateValues instanceId = do
                 chooseQuorateValues (succ instanceId)
                 -- TODO early exit from loop
 
+-}
+
 tellChosen
-  :: (MonadWriter [ChosenMessage v] m, MonadState (LearnerState v) m)
-  => InstanceId -> ProposalId -> Value v -> m ()
+  :: (MonadWriter [ChosenMessage q v] m, MonadState (LearnerState q v) m)
+  => InstanceId -> ProposalId -> Value q v -> m ()
 tellChosen instanceId proposalId value = do
   tell [Chosen instanceId value]
   modify $ \s -> s { lnrChosenValues
     = M.insertWith max instanceId (AcceptedValue proposalId value)
       $ lnrChosenValues s }
-
 
