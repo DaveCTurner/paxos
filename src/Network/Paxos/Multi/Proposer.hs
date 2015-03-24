@@ -4,7 +4,18 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE LambdaCase #-}
 
-module Network.Paxos.Multi.Proposer where
+{-| Implementation of a single proposer, which collects each 'PromisedMessage'
+until it has a quorum. -}
+
+-- TODO NACKs should bump the proposal id
+-- TODO handle requests to choose a value
+
+module Network.Paxos.Multi.Proposer
+  ( ProposerState
+  , initialProposerState
+  , handleChosen
+  , handlePromise
+  ) where
 
 import Control.Applicative
 import Control.Monad.Reader
@@ -30,7 +41,8 @@ data InstanceProposerState q v = InstanceProposerState
   , iprPromisesState   :: PromisesState q v
   }
 
-data ProposersState q v = ProposersState
+{-| The state of a proposer. -}
+data ProposerState q v = ProposerState
   { pprProposalId          :: ProposalId
   , pprMinMultiInstance    :: InstanceId
   , pprPromises            :: S.Set AcceptorId
@@ -38,8 +50,26 @@ data ProposersState q v = ProposersState
   , pprProposersByInstance :: M.Map InstanceId (InstanceProposerState q v)
   }
 
+{-| The initial state of a proposer. If the proposer is joining a cluster that has
+been running for some time, use 'handleChosen' to bring it up to date with the last
+chosen instance. -}
+initialProposerState :: ProposerId -> q -> ProposerState q v
+initialProposerState pid topology = ProposerState
+  { pprProposalId          = ProposalId
+      { pidTopologyVersion = TopologyVersion 0
+      , pidProposal        = ProposalNumber 0
+      , pidProposerId      = pid
+      }
+  , pprMinMultiInstance    = InstanceId 0
+  , pprPromises            = S.empty
+  , pprTopology            = topology
+  , pprProposersByInstance = M.empty
+  }
+
+{-| Handle the event that a new value has been chosen, which removes data about
+preceding instances and may also update the topology. -}
 handleChosen
-  :: (MonadState (ProposersState q v) m, MonadWriter [PrepareMessage] m)
+  :: (MonadState (ProposerState q v) m, MonadWriter [PrepareMessage] m)
   => InstanceId -> TopologyVersion -> q -> m ()
 handleChosen instanceId topologyVersion topology = removeChosenInstances >> bumpProposalTopologies
   where
@@ -79,7 +109,7 @@ handleChosen instanceId topologyVersion topology = removeChosenInstances >> bump
 
       tell [Prepare (fromMaybe minMultiInstance maybeMinInstance) newProposalId MultiPrepare]
 
-spawnInstanceProposersTo :: (Quorum q, MonadState (ProposersState q v) m) => InstanceId -> m ()
+spawnInstanceProposersTo :: (Quorum q, MonadState (ProposerState q v) m) => InstanceId -> m ()
 spawnInstanceProposersTo newMinMultiInstance = do
   oldMinMultiInstance <- gets pprMinMultiInstance
   forM_ (takeWhile (< newMinMultiInstance) $ iterate suc oldMinMultiInstance) $ \newInstance -> do
@@ -100,8 +130,11 @@ spawnInstanceProposersTo newMinMultiInstance = do
                 } $ pprProposersByInstance s
       }
 
+{-| Handle a 'PromisedMessage' indicating a commitment from an acceptor not to
+accept any earlier-numbered proposals. May result in some 'ProposedMessage'
+outputs which should be broadcast to all acceptors. -}
 handlePromise
-  :: (MonadState (ProposersState q v) m, MonadWriter [ProposedMessage q v] m, Quorum q)
+  :: (MonadState (ProposerState q v) m, MonadWriter [ProposedMessage q v] m, Quorum q)
   => AcceptorId -> PromisedMessage q v -> m ()
 handlePromise acceptorId (Promised instanceId proposalId MultiPromise) = do
   spawnInstanceProposersTo instanceId
@@ -119,7 +152,7 @@ handlePromise acceptorId (Promised instanceId proposalId (Bound previousProposal
   handleIndividualPromise acceptorId instanceId proposalId (Just $ AcceptedValue previousProposal value)
 
 handleIndividualPromise
-  :: (MonadState (ProposersState q v) m, MonadWriter [ProposedMessage q v] m, Quorum q)
+  :: (MonadState (ProposerState q v) m, MonadWriter [ProposedMessage q v] m, Quorum q)
   => AcceptorId -> InstanceId -> ProposalId -> Maybe (AcceptedValue q v) -> m ()
 handleIndividualPromise acceptorId instanceId proposalId maybeAcceptedValue = do
   spawnInstanceProposersTo $ suc instanceId

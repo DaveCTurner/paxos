@@ -13,8 +13,7 @@ module Network.Paxos.Multi.Acceptor
   , handlePrepare
   , handleProposed
   , archiveUpToInstance
-  )
- where
+  ) where
 
 import Control.Monad.Reader
 import Control.Monad.State
