@@ -19,11 +19,16 @@ Source-Repository head
   Location:          git://github.com/NicolasT/paxos.git
 
 Library
-  Exposed-Modules:     Network.Paxos.Synod,
-                       Network.Paxos.Synod.Proposer,
-                       Network.Paxos.Synod.Acceptor,
+  Exposed-Modules:     Network.Paxos.Synod
+                       Network.Paxos.Synod.Proposer
+                       Network.Paxos.Synod.Acceptor
                        Network.Paxos.Synod.Learner
                        Network.Paxos.Multi
+                       Network.Paxos.Multi.Acceptor
+                       Network.Paxos.Multi.Learner
+                       Network.Paxos.Multi.Majority
+                       Network.Paxos.Multi.Proposer
+                       Network.Paxos.Multi.Types
   Other-Modules:       Data.Serialize.QuickCheck,
                        Network.Paxos.Synod.Action,
                        Network.Paxos.Synod.Types,
