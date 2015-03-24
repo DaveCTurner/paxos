@@ -14,6 +14,33 @@ import qualified Data.RangeMap as RM
 
 import Network.Paxos.Multi.Types
 
+{- Acceptor invariants:
+
+May send [Promise instanceId proposalId Free] as long as nothing has been
+accepted for instance instanceId
+
+May send [Promise instanceId proposalId MultiPromise] as long as nothing has
+been accepted for any instance >= instanceId
+
+May send [Promise instanceId proposalId (Bound p v)] as long as p is the
+greatest proposal accepted so far for instance instanceId, where v =
+value_accepted instanceId p is the value of the proposal that was accepted at p
+and is equal to value_promised instanceId proposalId
+
+May not update value_promised after a bound promise has been sent
+(so that two promises for the same proposal must have the same PromiseType).
+
+May send [Accepted instanceId proposalId value] if:
+  - Proposed instanceId proposalId value is received
+  - value_accepted instanceId proposalId = value_proposed instanceId proposalId
+  - proposalId is at least equal to the minimum acceptable proposal
+       (according to the various promises already sent)
+
+May not update value_accepted instanceId proposalId after sending
+[Accepted instanceId proposalId value]
+
+-}
+
 data AcceptorState q v = AcceptorState
   { accMinAcceptableProposal      :: RM.RangeMap InstanceId ProposalId
   , accLatestAcceptanceByInstance :: M.Map InstanceId (AcceptedValue q v)
