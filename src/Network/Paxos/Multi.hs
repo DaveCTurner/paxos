@@ -382,10 +382,9 @@ handleIndividualPromise acceptorId instanceId proposalId maybeAcceptedValue = do
 
     Nothing -> return () -- Instance is obsolete
 
-    Just ipr -> when (iprProposalId ipr == proposalId
-                      && pidTopologyVersion proposalId <= iprTopologyVersion ipr) $ do
+    Just ipr -> when (iprProposalId ipr == proposalId) $ do
 
-      -- Hmm - topology stuff doesn't look right.
+      -- TODO must ensure that pidTopologyVersion proposalId <= instanceTopologyVersion
 
       let (newState, newMaxAccepted) = case iprPromisesState ipr of
 
