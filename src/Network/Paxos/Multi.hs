@@ -322,8 +322,6 @@ data InstanceProposerState q v = InstanceProposerState
   { iprProposalId      :: ProposalId
   , iprValue           :: Maybe (Value q v)
   , iprPromisesState   :: PromisesState q v
-  , iprTopologyVersion :: TopologyVersion
-  , iprTopology        :: q
   }
 
 data ProposersState q v = ProposersState
@@ -334,6 +332,12 @@ data ProposersState q v = ProposersState
   , pprTopology            :: q
   , pprProposersByInstance :: M.Map InstanceId (InstanceProposerState q v)
   }
+
+handleChosen
+  :: (MonadState (ProposersState q v) m)
+  => InstanceId -> TopologyVersion -> q -> m (Maybe ProposalId)
+handleChosen instanceId topologyVersion topology = do
+  return Nothing
 
 spawnInstanceProposersTo :: (Quorum q, MonadState (ProposersState q v) m) => InstanceId -> m ()
 spawnInstanceProposersTo newMinMultiInstance = do
@@ -353,8 +357,6 @@ spawnInstanceProposersTo newMinMultiInstance = do
                 { iprProposalId      = pprProposalId s
                 , iprValue           = Nothing
                 , iprPromisesState   = promisesState
-                , iprTopologyVersion = pprTopologyVersion s
-                , iprTopology        = pprTopology s
                 } $ pprProposersByInstance s
       }
 
@@ -382,6 +384,7 @@ handleIndividualPromise
 handleIndividualPromise acceptorId instanceId proposalId maybeAcceptedValue = do
   spawnInstanceProposersTo $ succ instanceId
   let mkProposedMessage = Proposed instanceId proposalId
+  topology <- gets pprTopology
   maybeInstanceProposerState <- gets $ M.lookup instanceId . pprProposersByInstance
   case maybeInstanceProposerState of
 
@@ -391,7 +394,7 @@ handleIndividualPromise acceptorId instanceId proposalId maybeAcceptedValue = do
 
       newPromisesState <- flip execStateT (iprPromisesState ipr) $ do
         insertPromise acceptorId maybeAcceptedValue
-        maybeValueToPropose <- checkIfReady (iprTopology ipr)
+        maybeValueToPropose <- checkIfReady topology
         proposeIfReady mkProposedMessage
           $ fmap valueFromAccepted maybeValueToPropose <|> iprValue ipr
 
