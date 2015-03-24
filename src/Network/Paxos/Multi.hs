@@ -18,8 +18,15 @@ import qualified Data.Map as M
 import qualified Data.RangeMap as RM
 import qualified Data.Set as S
 
-newtype InstanceId = InstanceId Integer deriving (Show, Eq, Ord, Enum)
-newtype TopologyVersion = TopologyVersion Integer deriving (Show, Eq, Ord, Enum)
+class HasSuccessor a where
+  suc :: a -> a
+
+newtype InstanceId = InstanceId Integer deriving (Show, Eq, Ord)
+newtype TopologyVersion = TopologyVersion Integer deriving (Show, Eq, Ord)
+
+instance HasSuccessor InstanceId      where suc (InstanceId i)      = InstanceId (i + 1)
+instance HasSuccessor TopologyVersion where suc (TopologyVersion v) = TopologyVersion (v + 1)
+
 newtype AcceptorId = AcceptorId Integer deriving (Show, Eq, Ord)
 
 newtype ProposalNumber = ProposalNumber Integer deriving (Show, Eq, Ord)
@@ -119,11 +126,11 @@ handlePrepare time (Prepare instanceId proposalId MultiPrepare) = whenOkProposer
 
   let allAcceptancesBefore = case M.maxViewWithKey acceptances of
         Nothing                            -> instanceId
-        Just ((maxAcceptedInstance, _), _) -> succ maxAcceptedInstance
+        Just ((maxAcceptedInstance, _), _) -> suc maxAcceptedInstance
 
   let pidMap = M.unionWith max
         (M.map Just acceptances)
-        (M.fromAscList [(i, Nothing) | i <- takeWhile (< allAcceptancesBefore) [instanceId..]])
+        (M.fromAscList [(i, Nothing) | i <- takeWhile (< allAcceptancesBefore) (iterate suc instanceId)])
 
   forM_ (M.toList pidMap) $ \(i, maybeAcceptedProposalValue)
     -> tellPromise i proposalId $ maybe Free boundFromAccepted maybeAcceptedProposalValue
@@ -183,7 +190,7 @@ data LearnerState q v = LearnerState
   }
 
 lnrNextInstanceToChoose :: LearnerState q v -> InstanceId
-lnrNextInstanceToChoose = maybe (InstanceId 0) (succ . fst . fst) . M.maxViewWithKey . lnrChosenValues
+lnrNextInstanceToChoose = maybe (InstanceId 0) (suc . fst . fst) . M.maxViewWithKey . lnrChosenValues
 
 handleAccepted
   :: (MonadWriter [ChosenMessage q v] m, MonadState (LearnerState q v) m, Quorum q)
@@ -201,7 +208,7 @@ handleAccepted acceptorId (Accepted instanceId proposalId value) = do
     Nothing -> do
       minInstanceTopologyVersion <- gets lnrTopologyVersionForFirstUnchosenInstance
 
-      when (minInstanceTopologyVersion <= succ (pidTopologyVersion proposalId)) $ do
+      when (minInstanceTopologyVersion <= suc (pidTopologyVersion proposalId)) $ do
 
         modify $ \s -> s
           { lnrAcceptances
@@ -228,10 +235,10 @@ handleAccepted acceptorId (Accepted instanceId proposalId value) = do
         when (oldNextInstanceToChoose < newNextInstanceToChoose) $ do
 
           let removeOldTopologies :: M.Map ProposalId a -> M.Map ProposalId a
-              removeOldTopologies = M.filterWithKey (\pid _ -> newMinInstanceTopologyVersion <= succ (pidTopologyVersion pid))
+              removeOldTopologies = M.filterWithKey (\pid _ -> newMinInstanceTopologyVersion <= suc (pidTopologyVersion pid))
 
               removeChosenInstances :: M.Map InstanceId a -> M.Map InstanceId a
-              removeChosenInstances = snd . M.split (pred newNextInstanceToChoose)
+              removeChosenInstances = removeKeysLessThan newNextInstanceToChoose
 
               tidyMap :: M.Map InstanceId (M.Map ProposalId a) -> M.Map InstanceId (M.Map ProposalId a)
               tidyMap = M.map removeOldTopologies . removeChosenInstances
@@ -240,6 +247,11 @@ handleAccepted acceptorId (Accepted instanceId proposalId value) = do
             { lnrAcceptances       = tidyMap $ lnrAcceptances s
             , lnrLastValueAccepted = tidyMap $ lnrLastValueAccepted s
             }
+
+removeKeysLessThan :: InstanceId -> M.Map InstanceId a -> M.Map InstanceId a
+removeKeysLessThan instanceId m = case M.splitLookup instanceId m of
+  (_, Nothing, m') -> m'
+  (_, Just a, m')  -> M.insert instanceId a m'
 
 newtype LearnerT m a = LearnerT (MaybeT (StateT InstanceId m) a)
   deriving (Functor, Applicative, Monad)
@@ -254,7 +266,7 @@ getNextInstance :: Monad m => LearnerT m InstanceId
 getNextInstance = LearnerT $ lift get
 
 advanceInstance :: Monad m => LearnerT m ()
-advanceInstance = LearnerT $ lift $ modify succ
+advanceInstance = LearnerT $ lift $ modify suc
 
 exitLearner :: Monad m => LearnerT m a
 exitLearner = LearnerT mzero
@@ -271,8 +283,8 @@ chooseQuorateValues = do
   instanceTopologyVersion <- lift $ gets lnrTopologyVersionForFirstUnchosenInstance
 
   let lnrQuorum proposalTopologyVersion
-        | instanceTopologyVersion ==       proposalTopologyVersion  = lnrTopologyForFirstUnchosenInstance
-        | instanceTopologyVersion == succ (proposalTopologyVersion) = lnrTopologyBeforeFirstUnchosenInstance
+        | instanceTopologyVersion ==      proposalTopologyVersion  = lnrTopologyForFirstUnchosenInstance
+        | instanceTopologyVersion == suc (proposalTopologyVersion) = lnrTopologyBeforeFirstUnchosenInstance
         | otherwise = const noQuorums
 
   acceptanceMap <- unJust $ gets $ M.lookup instanceToChoose . lnrAcceptances
@@ -286,14 +298,14 @@ chooseQuorateValues = do
       case chosenValue of
         AlterTopology alteration -> lift $ modify $ \s -> s
           { lnrTopologyVersionForFirstUnchosenInstance
-            = succ (lnrTopologyVersionForFirstUnchosenInstance s)
+            = suc (lnrTopologyVersionForFirstUnchosenInstance s)
           , lnrTopologyForFirstUnchosenInstance    = alterQuorum alteration (lnrTopologyForFirstUnchosenInstance s)
           , lnrTopologyBeforeFirstUnchosenInstance = lnrTopologyForFirstUnchosenInstance s
           }
 
         SetTopology newTopology -> lift $ modify $ \s -> s
           { lnrTopologyVersionForFirstUnchosenInstance
-            = succ (succ (lnrTopologyVersionForFirstUnchosenInstance s))
+            = suc (suc (lnrTopologyVersionForFirstUnchosenInstance s))
           , lnrTopologyForFirstUnchosenInstance    = newTopology
           , lnrTopologyBeforeFirstUnchosenInstance = noQuorums
           }
@@ -346,7 +358,7 @@ handleChosen instanceId topologyVersion topology = removeChosenInstances >> bump
   removeChosenInstances = do
     minMultiInstance <- gets pprMinMultiInstance
     modify $ \s -> if minMultiInstance <= instanceId
-      then s { pprMinMultiInstance = succ instanceId
+      then s { pprMinMultiInstance = suc instanceId
              , pprProposersByInstance = M.empty }
       else s { pprProposersByInstance = snd $ M.split instanceId $ pprProposersByInstance s }
 
@@ -381,7 +393,7 @@ handleChosen instanceId topologyVersion topology = removeChosenInstances >> bump
 spawnInstanceProposersTo :: (Quorum q, MonadState (ProposersState q v) m) => InstanceId -> m ()
 spawnInstanceProposersTo newMinMultiInstance = do
   oldMinMultiInstance <- gets pprMinMultiInstance
-  forM_ (takeWhile (< newMinMultiInstance) $ iterate succ oldMinMultiInstance) $ \newInstance -> do
+  forM_ (takeWhile (< newMinMultiInstance) $ iterate suc oldMinMultiInstance) $ \newInstance -> do
     s <- get
 
     promisesState <- execStateT (checkIfReady $ pprTopology s) CollectingPromises
@@ -390,7 +402,7 @@ spawnInstanceProposersTo newMinMultiInstance = do
                         }
 
     put $ s
-      { pprMinMultiInstance = succ newInstance
+      { pprMinMultiInstance = suc newInstance
       , pprProposersByInstance
           = M.insert newInstance InstanceProposerState
                 { iprProposalId      = pprProposalId s
@@ -405,7 +417,7 @@ handlePromise
 handlePromise acceptorId (Promised instanceId proposalId MultiPromise) = do
   spawnInstanceProposersTo instanceId
   minMultiInstance <- gets pprMinMultiInstance
-  forM_ (takeWhile (< minMultiInstance) $ iterate succ instanceId) $ \existingInstance
+  forM_ (takeWhile (< minMultiInstance) $ iterate suc instanceId) $ \existingInstance
     -> handlePromise acceptorId (Promised existingInstance proposalId Free)
 
   multiProposalId <- gets pprProposalId
@@ -421,7 +433,7 @@ handleIndividualPromise
   :: (MonadState (ProposersState q v) m, MonadWriter [ProposedMessage q v] m, Quorum q)
   => AcceptorId -> InstanceId -> ProposalId -> Maybe (AcceptedValue q v) -> m ()
 handleIndividualPromise acceptorId instanceId proposalId maybeAcceptedValue = do
-  spawnInstanceProposersTo $ succ instanceId
+  spawnInstanceProposersTo $ suc instanceId
   let mkProposedMessage = Proposed instanceId proposalId
   topology <- gets pprTopology
   maybeInstanceProposerState <- gets $ M.lookup instanceId . pprProposersByInstance
