@@ -151,5 +151,5 @@ archiveUpToInstance instanceId  = modify $ \s -> s
         $ accMinAcceptableProposal s
   , accLatestAcceptanceByInstance = snd $ M.split instanceId
         $ accLatestAcceptanceByInstance s
-  , accMinActiveInstance = suc instanceId
+  , accMinActiveInstance = max (suc instanceId) (accMinActiveInstance s)
   }
