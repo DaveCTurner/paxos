@@ -1490,6 +1490,44 @@ using accepts_proposed accepts_value chosen_Suc chosen_quorum
 apply (intro multiPaxos_intro_simple)
   by simp_all
 
+lemma (in multiPaxosL) multiPaxos_add_new_accepted:
+  assumes proposed_p0: "proposed i0 p0"
+  assumes promised_free_le: "\<And>p1. promised_free i0 a0 p1 \<Longrightarrow> p1 \<preceq> p0"
+  assumes promised_prev_le: "\<And>p1 p2. promised_prev i0 a0 p1 p2 \<Longrightarrow> p1 \<preceq> p0"
+  assumes multi_promised_le: "\<And>j p1. multi_promised j a0 p1 \<Longrightarrow> j \<le> i0 \<Longrightarrow> p1 \<preceq> p0"
+  assumes not_accepted: "\<not> accepted i0 a0 p0"
+
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
+  multi_promised promised_free promised_prev proposed
+  (%i a p. (i,a,p) = (i0, a0, p0) \<or> accepted i a p)
+  chosen value_promised value_proposed 
+  (%i a p. if (i,a,p) = (i0,a0,p0) then value_proposed i0 p0 else value_accepted i a p)"
+using assms
+proof (intro multiPaxosL.multiPaxos_add_accepted [OF multiPaxos_change_value_accepted])
+  fix i a p
+  assume "accepted i a p"
+  with not_accepted show "value_accepted i a p = (if (i, a, p) = (i0, a0, p0) then value_proposed i0 p0 else value_accepted i a p)" by auto
+qed auto
+
+lemma (in multiPaxosL) multiPaxos_add_new_promise_prev:
+  assumes accepted: "accepted i0 a0 p'0"
+  assumes accepted_max: "\<And>p2. accepted i0 a0 p2 \<Longrightarrow> p2 \<preceq> p'0"
+  and lt: "p'0 \<prec> p0"
+  and not_promised: "\<not> (EX p. promised_prev i0 a0 p0 p)"
+
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
+  multi_promised promised_free
+  (%i a p p'. (i,a,p,p') = (i0, a0, p0, p'0) \<or> promised_prev i a p p')
+  proposed accepted chosen 
+  (%i a p. if (i,a,p) = (i0, a0, p0) then value_accepted i0 a0 p'0 else value_promised i a p)
+  value_proposed value_accepted"
+using assms
+proof (intro multiPaxosL.multiPaxos_add_promise_prev [OF multiPaxos_change_value_promised])
+  fix i a p p1
+  assume "promised_prev i a p p1"
+  with not_promised
+  show "value_promised i a p = (if (i, a, p) = (i0, a0, p0) then value_accepted i0 a0 p'0 else value_promised i a p)" by auto
+qed auto
 
 lemma (in multiPaxosL) multiPaxos_intro:
 
@@ -2110,3 +2148,197 @@ proof -
   qed
 qed
 
+lemma (in multiPaxosL) multiPaxos_promised_prev_fun:
+  assumes "promised_prev i0 a p0 p1"
+  assumes "promised_prev i0 a p0 p1'"
+  shows "p1 = p1'"
+  by (metis assms promised_prev_accepted promised_prev_max promised_prev_prev propNo_lt_not_ge_E)
+
+lemma (in propNoL) finite_max:
+  assumes finite: "finite S"
+  assumes nonempty: "S \<noteq> {}"
+  obtains p_max where "p_max \<in> S" "\<And> p. p \<in> S \<Longrightarrow> p \<preceq> p_max"
+proof -
+  from finite
+  have p: "S \<noteq> {} \<Longrightarrow> \<exists> p_max \<in> S. \<forall> p \<in> S. p \<preceq> p_max"
+  proof (induct)
+    case (insert p S)
+    show ?case
+    proof (cases "S = {}")
+      case True thus ?thesis by auto
+    next
+      case False
+      from insert.hyps(3) [OF this]
+      obtain p0 where p0S: "p0 \<in> S" and p0_max: "\<And>p. p \<in> S \<Longrightarrow> p \<preceq> p0" by auto
+      show ?thesis
+        apply (cases "p0 \<prec> p")
+        apply (metis insert_iff le_lt_eq p0_max propNo_trans_le_le)
+        apply (metis insert_iff le_lt_eq p0_max propNo_trans_le_le p0S total)
+        done
+    qed
+  qed simp
+
+  from p [OF nonempty] obtain p_max where pS: "p_max \<in> S" and p_max: "\<And>p. p \<in> S \<Longrightarrow> p \<preceq> p_max"
+    by auto
+
+  show ?thesis by (intro that [OF pS] p_max)
+qed
+
+lemma (in multiPaxosL) multiPaxos_add_new_proposal_constrained:
+  assumes quorum_S: "quorum (prop_topology_version p0) S"
+  assumes promised_S: "\<And>a. a \<in> S \<Longrightarrow> promised_free i0 a p0 \<or> (\<exists>j \<le> i0. multi_promised j a p0) \<or> (EX p1. promised_prev i0 a p0 p1)"
+
+  assumes promised_prev: "\<exists> a \<in> S. \<exists> p1. promised_prev i0 a p0 p1"
+
+  assumes not_proposed: "\<not> proposed i0 p0"
+
+  assumes topo_version: "prop_topology_version p0 \<le> instance_topology_version i1"
+  assumes i10: "i1 \<le> i0"
+  assumes i1_chosen: "chosen_to i1"
+
+  defines p1_def: "p1 == (THE p. \<exists> a \<in> S. promised_prev i0 a p0 p \<and> (\<forall>a' \<in> S. \<forall>p'. promised_prev i0 a' p0 p' \<longrightarrow> p' \<preceq> p))"
+
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
+      multi_promised promised_free promised_prev
+      (%i p. (i,p) = (i0,p0) \<or> proposed i p)
+      accepted chosen 
+      value_promised (%i p. if (i,p) = (i0,p0) then value_proposed i0 p1 else value_proposed i p)
+      value_accepted"
+proof -
+  obtain a0 where a0S: "a0 \<in> S" and a0_promised: "promised_prev i0 a0 p0 p1" and p1_max: "\<And>a p. a \<in> S \<Longrightarrow> promised_prev i0 a p0 p \<Longrightarrow> p \<preceq> p1"
+  proof -
+    (*from promised_prev obtain a p where aS: "a \<in> S" and p: "promised_prev i0 a p0 p" by auto*)
+    
+    have eq: "((%a. THE p. promised_prev i0 a p0 p) ` {a \<in> S. \<exists> p. promised_prev i0 a p0 p}) = { p. \<exists> a \<in> S. promised_prev i0 a p0 p }"
+      (is "?LHS = ?RHS")
+    proof (intro equalityI subsetI)
+      fix x
+      assume "x \<in> ?LHS"
+      then obtain a p where aS: "a \<in> S" and p: "promised_prev i0 a p0 p"
+        and eq: "x = (THE p. promised_prev i0 a p0 p)" by auto
+
+      have "x = p"
+      proof (unfold eq, rule theI2)
+        from p show p: "promised_prev i0 a p0 p" .
+        fix q assume q: "promised_prev i0 a p0 q"
+        show "q = p" by (intro multiPaxos_promised_prev_fun [OF q p])
+        thus "q = p" .
+      qed
+
+      also from aS p have "p \<in> ?RHS" by auto
+      finally show "x \<in> ..." .
+    next
+      fix p
+      assume "p \<in> ?RHS"
+      then obtain a where aS: "a \<in> S" and p: "promised_prev i0 a p0 p" by auto
+
+      have "p = (THE p. promised_prev i0 a p0 p)"
+        by (intro sym [OF the_equality] p multiPaxos_promised_prev_fun [OF _ p])
+      also from p have "... \<in> ?LHS" by (intro imageI CollectI aS conjI exI)
+      finally show "p \<in> ?LHS" .
+    qed
+
+    have "finite S"
+    proof (intro quorum_finite)
+      from quorum_S show "quorum (prop_topology_version p0) S" .
+      have "quorum (prop_topology_version p0) \<in> set (rev (quorums_seq (values_lt_list (SOME i. prop_topology_version p0 < length (quorums_seq (values_lt_list i))))))"
+      proof (unfold quorum_def, intro nth_mem, unfold length_rev, rule someI)
+        note topo_version
+        also have "instance_topology_version i1 = topology_version (values_lt_list i1)" by (simp add: instance_topology_version_def)
+        also note topology_version_lt
+        finally show "prop_topology_version p0 < length (quorums_seq (values_lt_list i1))" .
+      qed
+      thus "quorum (prop_topology_version p0) \<in> set (quorums_seq (values_lt_list (SOME i. prop_topology_version p0 < length (quorums_seq (values_lt_list i)))))" by simp
+    qed
+
+    hence "finite {a \<in> S. \<exists> p. promised_prev i0 a p0 p}" by simp
+    hence "finite ((%a. THE p. promised_prev i0 a p0 p) ` {a \<in> S. \<exists> p. promised_prev i0 a p0 p})" by (intro finite_imageI)
+    hence finite_promises: "finite { p. \<exists> a \<in> S. promised_prev i0 a p0 p }" by (unfold eq)
+
+    from promised_prev have nonempty_promises: "{p. \<exists>a\<in>S. promised_prev i0 a p0 p} \<noteq> {}" by auto
+
+    from finite_max [OF finite_promises nonempty_promises]
+    obtain p_max where "p_max \<in> {p. \<exists>a\<in>S. promised_prev i0 a p0 p}" "\<And>p. p \<in> {p. \<exists>a\<in>S. promised_prev i0 a p0 p} \<Longrightarrow> p \<preceq> p_max" by auto
+    hence "\<exists>a\<in>S. promised_prev i0 a p0 p_max" and p_max: "\<And>p a. a \<in> S \<Longrightarrow> promised_prev i0 a p0 p \<Longrightarrow> p \<preceq> p_max" by auto
+    then obtain a_max where a_max_S: "a_max \<in> S" and a_max_promised: "promised_prev i0 a_max p0 p_max" by auto
+
+    have p_max_eq: "p_max = p1"
+    proof (unfold p1_def, intro sym [OF the_equality] bexI [where x = a_max] conjI a_max_S a_max_promised ballI allI impI p_max)
+      fix p
+
+      assume "\<exists>a\<in>S. promised_prev i0 a p0 p \<and> (\<forall>a'\<in>S. \<forall>p'. promised_prev i0 a' p0 p' \<longrightarrow> p' \<preceq> p)"
+      then obtain a1 where a1: "a1 \<in> S" "promised_prev i0 a1 p0 p" "\<And>a' p'. a' \<in> S \<Longrightarrow> promised_prev i0 a' p0 p' \<Longrightarrow> p' \<preceq> p" by auto
+      {
+        presume "p \<preceq> p_max" "p_max \<preceq> p"
+        thus "p = p_max" by auto
+      next
+        from a_max_S a_max_promised show "p_max \<preceq> p" by (intro a1)
+        from a1 show "p \<preceq> p_max" by (intro p_max) 
+      }
+    qed
+
+    show thesis
+      by (intro that [OF a_max_S] a_max_promised, fold p_max_eq, intro a_max_promised, intro p_max)
+  qed
+
+  have p: "\<And>A B C x. (A \<Longrightarrow> B = C) \<Longrightarrow> (A \<and> (B = x)) = (A \<and> (C = x))" by auto
+
+  have chosen_value_eq: "\<And> i p' v. (chosen i p' \<and> value_proposed i p' = v)
+    = (chosen i p' \<and> (if (i, p') = (i0, p0) then value_proposed i0 p1 else value_proposed i p') = v)"
+  proof (intro p)
+    fix i p
+    assume "chosen i p"
+    from chosen_quorum [OF this]
+    obtain a where "accepted i a p" by auto
+    from accepts_proposed [OF this] not_proposed have "(i,p) \<noteq> (i0, p0)" by auto
+    thus "value_proposed i p = (if (i, p) = (i0, p0) then value_proposed i0 p1 else value_proposed i p)" by auto
+  qed
+
+  have values_lt_list_eq: "\<And>i. values_lt_list i = (map value_chosen (desc_lt i))" by (simp add: values_lt_list_def)
+
+  show ?thesis
+  proof (intro multiPaxosL.multiPaxos_add_proposal_constrained [OF multiPaxos_change_value_proposed] promised_S,
+      fold chosen_value_eq value_chosen_def values_lt_list_eq instance_topology_version_def)
+    from quorum_S show "(rev (quorums_seq (values_lt_list (SOME i. prop_topology_version p0 < length (quorums_seq (values_lt_list i))))) ! prop_topology_version p0) S"
+      by (simp add: quorum_def)
+
+    from topo_version show "prop_topology_version p0 \<le> topology_version (values_lt_list i1)"
+      by (simp add: instance_topology_version_def)
+
+    from i10 show "i1 \<le> i0" .
+
+    from i1_chosen show "\<forall>j<i1. \<exists>p. chosen j p" by (auto simp add: chosen_to_def some_chosen_def)
+
+    fix i p
+    assume "proposed i p"
+    with not_proposed
+    show "value_proposed i p = (if (i, p) = (i0, p0) then value_proposed i0 p1 else value_proposed i p)" by auto
+
+  next
+    fix p1a a
+    assume aS: "a \<in> S" and p: "promised_prev i0 a p0 p1a"
+    have "p1a \<preceq> p1" by (intro p1_max [OF aS p])
+    hence "p1a = p1 \<or> p1a \<prec> p1" by auto
+    thus "(if (i0, p0) = (i0, p0) then value_proposed i0 p1 else value_proposed i0 p0) = value_promised i0 a p0 \<or> (\<exists>a2\<in>S. \<exists>p2. promised_prev i0 a2 p0 p2 \<and> p1a \<prec> p2)"
+    proof (elim disjE)
+      assume "p1a \<prec> p1"
+      with a0S a0_promised show ?thesis by auto
+    next
+      presume "value_proposed i0 p1 = value_promised i0 a p0"
+      thus ?thesis by simp
+    next
+      assume eq: "p1a = p1"
+      with p have p': "promised_prev i0 a p0 p1" by simp
+
+      from p
+      have "((p1 = p1a \<and> value_accepted i0 a p1 = value_promised i0 a p0) \<or> p1a \<prec> p1)"
+        by (intro promised_prev_max p' promised_prev_prev promised_prev_accepted)
+      with eq have "value_promised i0 a p0 = value_accepted i0 a p1" by auto
+
+      also have "... = value_proposed i0 p1"
+        by (intro accepts_value promised_prev_accepted [OF p'])
+
+      finally show "value_proposed i0 p1 = value_promised i0 a p0" ..
+    qed
+  qed
+qed
