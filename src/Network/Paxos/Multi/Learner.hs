@@ -5,7 +5,27 @@
 {-# LANGUAGE LambdaCase #-}
 
 {-| Implementation of a learner, which collects each 'AcceptedMessage' it
-receives until it has a quorum. -}
+receives until it has a quorum.
+
+A learner may send a @'Chosen' instanceId value@ message when there is a @proposalId@ such that:
+
+- the topology version of @instanceId@ is at most @'pidTopologyVersion'
+  proposalId + 1@ (so that the proposal is not too out-of-date).
+
+- there is a nonempty set 'S' of acceptors from which it has received
+  @'Accepted' instanceId proposalId _@.
+
+- 'S' is a quorum according to the topology with version @'pidTopologyVersion'
+  proposalId@.
+
+- the learner has previously sent a 'Chosen' message for the instance before
+  @instanceId@ (or @instanceId == 'InstanceId' 0@).
+
+In this case @value@ may be the value of any of the 'Accepted' messages
+received: they will all be equal because of the invariants elsewhere in the
+system.
+
+-}
 
 module Network.Paxos.Multi.Learner
   ( LearnerState

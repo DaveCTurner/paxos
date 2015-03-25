@@ -5,7 +5,29 @@
 {-# LANGUAGE LambdaCase #-}
 
 {-| Implementation of a single acceptor. A quorum of acceptors is required to
-choose a value. -}
+choose a value. 
+
+Acceptors satisfy the following invariants:
+
+- May send @'Promised' instanceId proposalId 'MultiPromise'@ as long as it has not
+  previously sent @'Accepted' instanceId' proposalId' value'@ for any
+  @instanceId' >= instanceId@ and any @proposalId'@ and @value'@.
+
+- May send @'Promised' instanceId proposalId 'Free'@ as long as it has not
+  previously sent @'Accepted' instanceId proposalId' value'@ for any
+  @proposalId'@ and @value'@.
+
+- May send @'Promised' instanceId proposalId ('Bound' proposalId' value')@ as long
+  as @proposalId' < proposalId@, it has previously sent @'Accepted' instanceId
+  proposalId' value'@, and it has not previously sent @'Accepted' instanceId
+  proposalId'' value''@ for any @proposalId'' > proposalId'@.
+
+- May send @'Accepted' instanceId proposalId value@ as long as it has received
+  @'Proposed' instanceId proposalId value@, and has not previously sent
+  @'Promised' instanceId proposalId' promiseType@ for any @proposalId' >
+  proposalId@ and any @promiseType@.
+
+-}
 
 module Network.Paxos.Multi.Acceptor
   ( AcceptorState
@@ -22,38 +44,25 @@ import qualified Data.RangeMap as RM
 
 import Network.Paxos.Multi.Types
 
-{- Acceptor invariants:
-
-May send [Promise instanceId proposalId Free] as long as nothing has been
-accepted for instance instanceId
-
-May send [Promise instanceId proposalId MultiPromise] as long as nothing has
-been accepted for any instance >= instanceId
-
-May send [Promise instanceId proposalId (Bound p v)] as long as p is the
-greatest proposal accepted so far for instance instanceId, where v =
-value_accepted instanceId p is the value of the proposal that was accepted at p
-and is equal to value_promised instanceId proposalId
-
-May not update value_promised after a bound promise has been sent
-(so that two promises for the same proposal must have the same PromiseType).
-
-May send [Accepted instanceId proposalId value] if:
-  - Proposed instanceId proposalId value is received
-  - value_accepted instanceId proposalId = value_proposed instanceId proposalId
-  - proposalId is at least equal to the minimum acceptable proposal
-       (according to the various promises already sent)
-
-May not update value_accepted instanceId proposalId after sending
-[Accepted instanceId proposalId value]
-
--}
-
 {-| The state of an individual acceptor. -}
 data AcceptorState q v = AcceptorState
-  { accMinAcceptableProposal      :: RM.RangeMap InstanceId ProposalId
+  { accMinActiveInstance          :: InstanceId
+  {- ^ Tracks the minimum @instanceId@ for which any @'Promised' instanceId _
+_@ or @'Accepted' instanceId _ _@ may be sent. State for instances prior to
+@accMinActiveInstance@ can be discarded. -}
+
+  , accMinAcceptableProposal      :: RM.RangeMap InstanceId ProposalId
+  {- ^ For each @instanceId > accMinActiveInstance@, records the maximum
+@proposalId@ for which a @'Promised' instanceId proposalId _@ has been sent
+which is therefore the minimum @proposalId@ for which an @'Accepted' instanceId
+proposalId _@ may be sent. -}
+
   , accLatestAcceptanceByInstance :: M.Map InstanceId (AcceptedValue q v)
-  , accMinActiveInstance          :: InstanceId
+  {- ^ For each @instanceId > accMinActiveInstance@, records the maximum
+@proposalId@ and corresponding @value@ for which an @'Accepted' instanceId
+proposalId value@ has been sent.  If there is no entry for @instanceId@ then no
+'Accepted' message has been sent for that instance. In particular, this
+includes all instances greater than the maximum 'instanceId' in this map. -}
   }
 
 {-| The initial state of an individual acceptor, before it has processed any messages. -}
