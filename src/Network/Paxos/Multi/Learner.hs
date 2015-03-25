@@ -63,7 +63,7 @@ joiningLearnerState i a v qCurrent qPrevious = LearnerState
   , lnrTopologyBeforeFirstUnchosenInstance     = qPrevious
   }
 
-{-| Get the value of the first instance whose value has not yet been learned. -}
+{-| Get the id of the first instance whose value has not yet been learned. -}
 nextInstance :: LearnerState q v -> InstanceId
 nextInstance = maybe (InstanceId 0) (suc . fst . fst) . M.maxViewWithKey . lnrChosenValues
 
