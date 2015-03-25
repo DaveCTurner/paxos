@@ -126,11 +126,10 @@ tellPromise
   :: (MonadEmitter m, Emitted m ~ PromisedMessage q v, MonadState (AcceptorState q v) m)
   => InstanceId -> ProposalId -> (PromiseType q v) -> m ()
 tellPromise i p t = do
-  let msg = Promised i p t
-  emit msg
+  emit $ Promised i p t
   let promiseRange = case t of
         MultiPromise -> RM.inclusiveUnbounded i
-        _     -> RM.inclusiveInclusive i i
+        _            -> RM.inclusiveInclusive i i
   modify $ \s -> s { accMinAcceptableProposal = RM.insertWith max promiseRange p $ accMinAcceptableProposal s }
 
 tellAccept
