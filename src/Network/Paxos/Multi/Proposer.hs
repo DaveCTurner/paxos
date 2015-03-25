@@ -9,7 +9,6 @@
 until it has a quorum. -}
 
 -- TODO NACKs should bump the proposal id
--- TODO handle requests to choose a value
 
 module Network.Paxos.Multi.Proposer
   ( ProposerState
@@ -112,30 +111,43 @@ handleChosen instanceId topologyVersion topology = removeChosenInstances >> bump
       emit $ Prepare (fromMaybe minMultiInstance maybeMinInstance) newProposalId MultiPrepare
 
 spawnInstanceProposersTo
-  :: (Quorum q, MonadState (ProposerState q v) m, MonadEmitter m, Emitted m ~ ProposedMessage q v)
+  :: (MonadState (ProposerState q v) m, MonadEmitter m, Emitted m ~ ProposedMessage q v)
   => InstanceId -> m ()
-spawnInstanceProposersTo newMinMultiInstance = do
-  oldMinMultiInstance <- gets pprMinMultiInstance
-  forM_ (takeWhile (< newMinMultiInstance) $ iterate suc oldMinMultiInstance) $ \newInstance -> do
-    s <- get
+spawnInstanceProposersTo newMinMultiInstance = go
+  where
+  go = do
+    oldMinMultiInstance <- gets pprMinMultiInstance
+    when (oldMinMultiInstance < newMinMultiInstance) $ do
+      spawnNextInstance NoOp
+      go
 
-    promisesState <- case pprPromises s of
-      ReadyToPropose -> do
-        emit $ Proposed newInstance (pprProposalId s) NoOp
-        return ValueProposed
+{-| Spawn the next available instance with the given value. If enough promises have already
+been received, results in a 'ProposedMessage' which should be broadcast to all acceptors. -}
+spawnNextInstance
+  :: (MonadState (ProposerState q v) m, MonadEmitter m, Emitted m ~ ProposedMessage q v)
+  => Value q v -> m ()
+spawnNextInstance value = do
+  newInstance      <- gets pprMinMultiInstance
+  multiPromises    <- gets pprPromises
+  proposalId       <- gets pprProposalId
 
-      CollectingMultiPromises promises -> return CollectingPromises
-        { cprPromises = promises, cprMaxAccepted = Nothing }
+  promisesState <- case multiPromises of
+    ReadyToPropose -> do
+      emit $ Proposed newInstance proposalId value
+      return ValueProposed
 
-    put $ s
-      { pprMinMultiInstance = suc newInstance
-      , pprProposersByInstance
-          = M.insert newInstance InstanceProposerState
-                { iprProposalId      = pprProposalId s
-                , iprValue           = NoOp
-                , iprPromisesState   = promisesState
-                } $ pprProposersByInstance s
-      }
+    CollectingMultiPromises promises -> return CollectingPromises
+      { cprPromises = promises, cprMaxAccepted = Nothing }
+
+  modify $ \s -> s
+    { pprMinMultiInstance = suc newInstance
+    , pprProposersByInstance
+        = M.insert newInstance InstanceProposerState
+              { iprProposalId      = proposalId
+              , iprValue           = value
+              , iprPromisesState   = promisesState
+              } $ pprProposersByInstance s
+    }
 
 {-| Handle a 'PromisedMessage' indicating a commitment from an acceptor not to
 accept any earlier-numbered proposals. May result in some 'ProposedMessage'
