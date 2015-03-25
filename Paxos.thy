@@ -2426,3 +2426,42 @@ next
     qed
   qed
 qed
+
+lemma (in multiPaxosL) multiPaxos_add_promise_prev_strong:
+  assumes accepted: "accepted i0 a0 p'0"
+  assumes accepted_max: "\<And>p2. accepted i0 a0 p2 \<Longrightarrow> p2 \<preceq> p'0"
+  and lt: "p'0 \<prec> p0"
+
+  shows "multiPaxosL lt le quorums_seq topology_version prop_topology_version
+  multi_promised promised_free
+  (%i a p p'. (i,a,p,p') = (i0, a0, p0, p'0) \<or> promised_prev i a p p')
+  proposed accepted chosen 
+  (%i a p. if (i,a,p) = (i0, a0, p0) \<and> \<not> (EX p. promised_prev i0 a0 p0 p) then value_accepted i0 a0 p'0 else value_promised i a p)
+  value_proposed value_accepted"
+proof (cases "EX p. promised_prev i0 a0 p0 p")
+  case False
+
+  hence eq: "(%i a p. if (i,a,p) = (i0, a0, p0) \<and> \<not> (EX p. promised_prev i0 a0 p0 p) then value_accepted i0 a0 p'0 else value_promised i a p)
+    = (%i a p. if (i,a,p) = (i0, a0, p0) then value_accepted i0 a0 p'0 else value_promised i a p)" by simp
+
+  show ?thesis
+    by (unfold eq, intro multiPaxos_add_new_promise_prev accepted accepted_max lt False)
+
+next
+  case True
+  then obtain p1 where promised_p1: "promised_prev i0 a0 p0 p1" by auto
+  from promised_prev_max [OF this accepted lt]
+  have p01: "p'0 \<preceq> p1" by auto
+
+  have "p1 \<preceq> p'0"
+    by (intro accepted_max promised_prev_accepted [OF promised_p1])
+  with p01 have eq: "p'0 = p1" by auto
+
+  from eq promised_p1
+  have eq1: "(\<lambda>i a p p'. (i, a, p, p') = (i0, a0, p0, p'0) \<or> promised_prev i a p p') = promised_prev" by auto
+  from True have eq2: "(\<lambda>i a p. if (i, a, p) = (i0, a0, p0) \<and> \<not> (\<exists>p. promised_prev i0 a0 p0 p) then value_accepted i0 a0 p'0 else value_promised i a p) = value_promised" by auto
+
+  show ?thesis
+    by (unfold eq1 eq2, unfold_locales)
+qed
+
