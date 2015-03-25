@@ -17,7 +17,6 @@ module Network.Paxos.Multi.Proposer
   , handlePromise
   ) where
 
-import Control.Applicative
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Writer
@@ -32,12 +31,15 @@ data PromisesState q v
     { cprPromises :: S.Set AcceptorId
     , cprMaxAccepted :: Maybe (AcceptedValue q v)
     }
-  | ReadyToPropose
   | ValueProposed
+
+data MultiPromisesState
+  = CollectingMultiPromises (S.Set AcceptorId)
+  | ReadyToPropose
 
 data InstanceProposerState q v = InstanceProposerState
   { iprProposalId      :: ProposalId
-  , iprValue           :: Maybe (Value q v)
+  , iprValue           :: Value q v
   , iprPromisesState   :: PromisesState q v
   }
 
@@ -45,7 +47,7 @@ data InstanceProposerState q v = InstanceProposerState
 data ProposerState q v = ProposerState
   { pprProposalId          :: ProposalId
   , pprMinMultiInstance    :: InstanceId
-  , pprPromises            :: S.Set AcceptorId
+  , pprPromises            :: MultiPromisesState
   , pprTopology            :: q
   , pprProposersByInstance :: M.Map InstanceId (InstanceProposerState q v)
   }
@@ -61,7 +63,7 @@ initialProposerState pid topology = ProposerState
       , pidProposerId      = pid
       }
   , pprMinMultiInstance    = InstanceId 0
-  , pprPromises            = S.empty
+  , pprPromises            = CollectingMultiPromises S.empty
   , pprTopology            = topology
   , pprProposersByInstance = M.empty
   }
@@ -99,7 +101,7 @@ handleChosen instanceId topologyVersion topology = removeChosenInstances >> bump
 
       modify $ \s -> s
         { pprProposalId          = newProposalId
-        , pprPromises            = S.empty
+        , pprPromises            = CollectingMultiPromises S.empty
         , pprTopology            = topology
         , pprProposersByInstance = M.map updateInstanceState $ pprProposersByInstance s
         }
@@ -109,23 +111,28 @@ handleChosen instanceId topologyVersion topology = removeChosenInstances >> bump
 
       tell [Prepare (fromMaybe minMultiInstance maybeMinInstance) newProposalId MultiPrepare]
 
-spawnInstanceProposersTo :: (Quorum q, MonadState (ProposerState q v) m) => InstanceId -> m ()
+spawnInstanceProposersTo
+  :: (Quorum q, MonadState (ProposerState q v) m, MonadWriter [ProposedMessage q v] m)
+  => InstanceId -> m ()
 spawnInstanceProposersTo newMinMultiInstance = do
   oldMinMultiInstance <- gets pprMinMultiInstance
   forM_ (takeWhile (< newMinMultiInstance) $ iterate suc oldMinMultiInstance) $ \newInstance -> do
     s <- get
 
-    promisesState <- execStateT (checkIfReady $ pprTopology s) CollectingPromises
-                        { cprPromises = pprPromises s
-                        , cprMaxAccepted = Nothing
-                        }
+    promisesState <- case pprPromises s of
+      ReadyToPropose -> do
+        tell [Proposed newInstance (pprProposalId s) NoOp]
+        return ValueProposed
+
+      CollectingMultiPromises promises -> return CollectingPromises
+        { cprPromises = promises, cprMaxAccepted = Nothing }
 
     put $ s
       { pprMinMultiInstance = suc newInstance
       , pprProposersByInstance
           = M.insert newInstance InstanceProposerState
                 { iprProposalId      = pprProposalId s
-                , iprValue           = Nothing
+                , iprValue           = NoOp
                 , iprPromisesState   = promisesState
                 } $ pprProposersByInstance s
       }
@@ -143,7 +150,17 @@ handlePromise acceptorId (Promised instanceId proposalId MultiPromise) = do
     -> handlePromise acceptorId (Promised existingInstance proposalId Free)
 
   multiProposalId <- gets pprProposalId
-  when (proposalId == multiProposalId) $ modify $ \s -> s { pprPromises = S.insert acceptorId $ pprPromises s }
+  when (proposalId == multiProposalId) $ gets pprPromises >>= \case
+    CollectingMultiPromises promises -> do
+      let promises' = S.insert acceptorId promises 
+      topology <- gets pprTopology
+      modify $ \s -> s
+        { pprPromises
+            = if isQuorum topology promises'
+              then ReadyToPropose
+              else CollectingMultiPromises promises'
+        }
+    _ -> return ()
 
 handlePromise acceptorId (Promised instanceId proposalId Free) =
   handleIndividualPromise acceptorId instanceId proposalId Nothing
@@ -163,45 +180,22 @@ handleIndividualPromise acceptorId instanceId proposalId maybeAcceptedValue = do
 
     Nothing -> return () -- Instance is obsolete
 
-    Just ipr -> when (iprProposalId ipr == proposalId) $ do
+    Just ipr -> when (iprProposalId ipr == proposalId) $ case (iprPromisesState ipr) of
+      CollectingPromises{..} -> do
 
-      newPromisesState <- flip execStateT (iprPromisesState ipr) $ do
-        insertPromise acceptorId maybeAcceptedValue
-        maybeValueToPropose <- checkIfReady topology
-        proposeIfReady mkProposedMessage
-          $ fmap valueFromAccepted maybeValueToPropose <|> iprValue ipr
+        let cprPromises'    = S.insert acceptorId cprPromises
+            cprMaxAccepted' = max maybeAcceptedValue cprMaxAccepted
 
-      -- TODO must ensure that pidTopologyVersion proposalId <= instanceTopologyVersion
+        newPromisesState <- if isQuorum topology cprPromises'
+          then do
+            tell [mkProposedMessage $ maybe (iprValue ipr) valueFromAccepted cprMaxAccepted']
+            return ValueProposed
+          else return CollectingPromises { cprPromises = cprPromises', cprMaxAccepted = cprMaxAccepted' }
 
-      modify $ \s -> s
-        { pprProposersByInstance = M.insert instanceId ipr
-            { iprPromisesState = newPromisesState }
-            $ pprProposersByInstance s
-        }
+        modify $ \s -> s
+          { pprProposersByInstance = M.insert instanceId ipr
+              { iprPromisesState = newPromisesState }
+              $ pprProposersByInstance s
+          }
 
-insertPromise :: MonadState (PromisesState q v) m => AcceptorId -> Maybe (AcceptedValue q v) -> m ()
-insertPromise acceptorId maybeAcceptedValue = get >>= \case
-  CollectingPromises{..} -> put $ CollectingPromises
-    { cprPromises = S.insert acceptorId cprPromises
-    , cprMaxAccepted = max maybeAcceptedValue cprMaxAccepted
-    }
-  _ -> return ()
-
-checkIfReady :: (Quorum q, MonadState (PromisesState q v) m)
-  => q -> m (Maybe (AcceptedValue q v))
-checkIfReady q = get >>= \case
-  CollectingPromises{..}
-    | isQuorum q cprPromises -> do
-          put ReadyToPropose
-          return cprMaxAccepted
-  _ -> return Nothing
-
-proposeIfReady
-  :: (MonadState (PromisesState q v) m, MonadWriter [ProposedMessage q v] m)
-  => (Value q v -> ProposedMessage q v) -> Maybe (Value q v) -> m ()
-proposeIfReady mkProposedMessage (Just value) = get >>= \case
-  ReadyToPropose -> do
-        tell [mkProposedMessage value]
-        put ValueProposed
-  _ -> return ()
-proposeIfReady _ _ = return ()
+      _ -> return ()
