@@ -29,6 +29,7 @@ Library
                        Network.Paxos.Multi.Majority
                        Network.Paxos.Multi.Proposer
                        Network.Paxos.Multi.Types
+                       Network.Paxos.Multi.Emitter
   Other-Modules:       Data.Serialize.QuickCheck,
                        Network.Paxos.Synod.Action,
                        Network.Paxos.Synod.Types,
@@ -43,6 +44,7 @@ Library
                        range-map,
                        transformers,
                        void,
+                       dlist,
                        time
   Hs-Source-Dirs:      src
   Ghc-Options:         -Wall -fwarn-incomplete-patterns

@@ -1,8 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Network.Paxos.Multi.Types where
 
@@ -27,6 +26,9 @@ data ProposalId = ProposalId
   , pidProposal        :: ProposalNumber
   , pidProposerId      :: ProposerId
   } deriving (Show, Eq, Ord)
+
+class MonadEmitter w m where
+  emit :: w -> m ()
 
 class Quorum q where
   type Alteration q
