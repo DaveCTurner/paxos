@@ -117,15 +117,14 @@ spawnInstanceProposersTo newMinMultiInstance = go
   where
   go = do
     oldMinMultiInstance <- gets pprMinMultiInstance
-    when (oldMinMultiInstance < newMinMultiInstance) $ do
-      spawnNextInstance NoOp
-      go
+    when (oldMinMultiInstance < newMinMultiInstance)
+      $ spawnNextInstance NoOp >> go
 
 {-| Spawn the next available instance with the given value. If enough promises have already
 been received, results in a 'ProposedMessage' which should be broadcast to all acceptors. -}
 spawnNextInstance
   :: (MonadState (ProposerState q v) m, MonadEmitter m, Emitted m ~ ProposedMessage q v)
-  => Value q v -> m ()
+  => Value q v -> m InstanceId
 spawnNextInstance value = do
   newInstance      <- gets pprMinMultiInstance
   multiPromises    <- gets pprPromises
@@ -148,6 +147,8 @@ spawnNextInstance value = do
               , iprPromisesState   = promisesState
               } $ pprProposersByInstance s
     }
+
+  return newInstance
 
 {-| Handle a 'PromisedMessage' indicating a commitment from an acceptor not to
 accept any earlier-numbered proposals. May result in some 'ProposedMessage'
