@@ -74,7 +74,7 @@ handleChosen
   => InstanceId -> TopologyVersion -> q -> m ()
 handleChosen instanceId topologyVersion topology = removeChosenInstances >> bumpProposalTopologies
   where
-  
+
   removeChosenInstances = do
     minMultiInstance <- gets pprMinMultiInstance
     modify $ \s -> if minMultiInstance <= instanceId
@@ -155,16 +155,19 @@ outputs which should be broadcast to all acceptors. -}
 handlePromise
   :: (MonadState (ProposerState q v) m, MonadEmitter m, Emitted m ~ ProposedMessage q v, Quorum q)
   => AcceptorId -> PromisedMessage q v -> m ()
+
 handlePromise acceptorId (Promised instanceId proposalId MultiPromise) = do
   spawnInstanceProposersTo instanceId
   minMultiInstance <- gets pprMinMultiInstance
   forM_ (takeWhile (< minMultiInstance) $ iterate suc instanceId) $ \existingInstance
     -> handlePromise acceptorId (Promised existingInstance proposalId Free)
 
+  bumpMultiProposalId proposalId
+
   multiProposalId <- gets pprProposalId
   when (proposalId == multiProposalId) $ gets pprPromises >>= \case
     CollectingMultiPromises promises -> do
-      let promises' = S.insert acceptorId promises 
+      let promises' = S.insert acceptorId promises
       topology <- gets pprTopology
       modify $ \s -> s
         { pprPromises
@@ -180,33 +183,64 @@ handlePromise acceptorId (Promised instanceId proposalId Free) =
 handlePromise acceptorId (Promised instanceId proposalId (Bound previousProposal value)) =
   handleIndividualPromise acceptorId instanceId proposalId (Just $ AcceptedValue previousProposal value)
 
+bumpMultiProposalId :: MonadState (ProposerState q v) m => ProposalId -> m ()
+bumpMultiProposalId newMultiProposalId = do
+  oldMultiProposalId <- gets pprProposalId
+  when (oldMultiProposalId     <       newMultiProposalId
+     && oldMultiProposalId `canBumpTo` newMultiProposalId)
+    $ modify $ \s -> s
+      { pprProposalId = newMultiProposalId
+      , pprPromises = CollectingMultiPromises S.empty
+      }
+
+canBumpTo :: ProposalId -> ProposalId -> Bool
+canBumpTo p1 p2 = pidTopologyVersion p1 == pidTopologyVersion p2
+               && pidProposerId      p1 == pidProposerId      p2
+
 handleIndividualPromise
   :: (MonadState (ProposerState q v) m, MonadEmitter m, Emitted m ~ ProposedMessage q v, Quorum q)
   => AcceptorId -> InstanceId -> ProposalId -> Maybe (AcceptedValue q v) -> m ()
 handleIndividualPromise acceptorId instanceId proposalId maybeAcceptedValue = do
   spawnInstanceProposersTo $ suc instanceId
-  topology <- gets pprTopology
   maybeInstanceProposerState <- gets $ M.lookup instanceId . pprProposersByInstance
   case maybeInstanceProposerState of
 
     Nothing -> return () -- Instance is obsolete
 
-    Just ipr -> when (iprProposalId ipr == proposalId) $ case (iprPromisesState ipr) of
-      CollectingPromises{..} -> do
+    Just ipr -> case compare (iprProposalId ipr) proposalId of
+      LT ->
+        -- Promise is for a higher-numbered proposal, but with the same topology.
+        -- This means that the current proposal has been abandoned. Start again
+        -- with the new proposal.
+        when (iprProposalId ipr `canBumpTo` proposalId)
+          $ collectPromise ipr
+              { iprProposalId    = proposalId
+              , iprPromisesState = CollectingPromises
+                  { cprPromises = S.empty, cprMaxAccepted = Nothing }
+              }
 
-        let cprPromises'    = S.insert acceptorId cprPromises
-            cprMaxAccepted' = max maybeAcceptedValue cprMaxAccepted
+      EQ -> -- Promise is for the current proposal, which needs more promises.
+        collectPromise ipr
 
-        newPromisesState <- if isQuorum topology cprPromises'
-          then do
-            emit $ Proposed instanceId proposalId $ maybe (iprValue ipr) valueFromAccepted cprMaxAccepted'
-            return ValueProposed
-          else return CollectingPromises { cprPromises = cprPromises', cprMaxAccepted = cprMaxAccepted' }
+      GT -> -- Promise is for an obsolete proposal - ignore it.
+        return ()
 
-        modify $ \s -> s
-          { pprProposersByInstance = M.insert instanceId ipr
-              { iprPromisesState = newPromisesState }
-              $ pprProposersByInstance s
-          }
+  where
+  collectPromise ipr@(InstanceProposerState {iprPromisesState = CollectingPromises{..}}) = do
+    let cprPromises'    = S.insert acceptorId cprPromises
+        cprMaxAccepted' = max maybeAcceptedValue cprMaxAccepted
 
-      _ -> return ()
+    topology <- gets pprTopology
+    newPromisesState <- if isQuorum topology cprPromises'
+      then do
+        emit $ Proposed instanceId proposalId $ maybe (iprValue ipr) valueFromAccepted cprMaxAccepted'
+        return ValueProposed
+      else return CollectingPromises { cprPromises = cprPromises', cprMaxAccepted = cprMaxAccepted' }
+
+    modify $ \s -> s
+      { pprProposersByInstance = M.insert instanceId ipr
+          { iprPromisesState = newPromisesState }
+          $ pprProposersByInstance s
+      }
+
+  collectPromise _ = return ()
