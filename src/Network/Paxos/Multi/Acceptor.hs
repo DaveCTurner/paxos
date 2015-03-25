@@ -53,6 +53,7 @@ May not update value_accepted instanceId proposalId after sending
 data AcceptorState q v = AcceptorState
   { accMinAcceptableProposal      :: RM.RangeMap InstanceId ProposalId
   , accLatestAcceptanceByInstance :: M.Map InstanceId (AcceptedValue q v)
+  , accMinActiveInstance          :: InstanceId
   }
 
 {-| The initial state of an individual acceptor, before it has processed any messages. -}
@@ -60,7 +61,13 @@ initialAcceptorState :: AcceptorState q v
 initialAcceptorState = AcceptorState
   { accMinAcceptableProposal      = RM.empty
   , accLatestAcceptanceByInstance = M.empty
+  , accMinActiveInstance          = InstanceId 0
   }
+
+whenActive :: MonadState (AcceptorState q v) m => InstanceId -> m () -> m ()
+whenActive instanceId go = do
+  minActiveInstance <- gets accMinActiveInstance
+  when (minActiveInstance <= instanceId) go
 
 {-| Handle a 'PrepareMessage', which may result in some 'PromisedMessage'
 outputs that should be sent to the proposer that originally sent the
@@ -68,7 +75,9 @@ outputs that should be sent to the proposer that originally sent the
 handlePrepare
   :: (MonadEmitter m, Emitted m ~ PromisedMessage q v, MonadState (AcceptorState q v) m)
   => PrepareMessage -> m ()
-handlePrepare (Prepare instanceId proposalId MultiPrepare) = do
+handlePrepare (Prepare givenInstanceId proposalId MultiPrepare) = do
+
+  instanceId <- gets $ max givenInstanceId . accMinActiveInstance
 
   acceptances <- acceptancesNotBefore instanceId
 
@@ -86,7 +95,7 @@ handlePrepare (Prepare instanceId proposalId MultiPrepare) = do
 
   tellPromise instanceGreaterThanAllAcceptances proposalId MultiPromise
 
-handlePrepare (Prepare instanceId proposalId SinglePrepare) = do
+handlePrepare (Prepare instanceId proposalId SinglePrepare) = whenActive instanceId $ do
   maybeCurrentAcceptance <- gets $ M.lookup instanceId . accLatestAcceptanceByInstance
   tellPromise instanceId proposalId $ maybe Free boundFromAccepted maybeCurrentAcceptance
 
@@ -103,7 +112,7 @@ that should be broadcast to all learners. -}
 handleProposed
   :: (MonadEmitter m, Emitted m ~ AcceptedMessage q v, MonadState (AcceptorState q v) m)
   => (ProposedMessage q v) -> m ()
-handleProposed (Proposed instanceId proposalId value) = do
+handleProposed (Proposed instanceId proposalId value) = whenActive instanceId $ do
 
   maybeMinAcceptableProposal <- gets $ RM.lookup instanceId . accMinAcceptableProposal
 
@@ -133,15 +142,14 @@ tellAccept i p v = do
       = M.insertWith max i (AcceptedValue p v) $ accLatestAcceptanceByInstance s }
 
 {-| Clear out state pertaining to instances that have been chosen and whose
-results are /reliably/ stored elsewhere. After calling @archiveUpToInstance
-instanceId@, the acceptor /must/ receive no further messages that relate to
-instances @<= instanceId@. This means that any learner that has not learned all
-the values chosen in instances @<= instanceId@ will be unable to proceed
-without restarting. -}
+results are /reliably/ stored elsewhere. This means that any learner that has
+not learned all the values chosen in instances @<= instanceId@ will be unable
+to proceed without restarting or looking elsewhere for chosen values. -}
 archiveUpToInstance :: MonadState (AcceptorState q v) m => InstanceId -> m ()
 archiveUpToInstance instanceId  = modify $ \s -> s  
   { accMinAcceptableProposal = RM.delete (RM.unboundedInclusive instanceId)
         $ accMinAcceptableProposal s
   , accLatestAcceptanceByInstance = snd $ M.split instanceId
         $ accLatestAcceptanceByInstance s
+  , accMinActiveInstance = suc instanceId
   }
