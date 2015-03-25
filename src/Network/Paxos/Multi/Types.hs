@@ -27,8 +27,9 @@ data ProposalId = ProposalId
   , pidProposerId      :: ProposerId
   } deriving (Show, Eq, Ord)
 
-class MonadEmitter w m where
-  emit :: w -> m ()
+class MonadEmitter m where
+  type Emitted m
+  emit :: Emitted m -> m ()
 
 class Quorum q where
   type Alteration q

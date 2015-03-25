@@ -3,6 +3,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 {-| Implementation of a single proposer, which collects each 'PromisedMessage'
 until it has a quorum. -}
@@ -19,7 +20,6 @@ module Network.Paxos.Multi.Proposer
 
 import Control.Monad.Reader
 import Control.Monad.State
-import Control.Monad.Writer
 import Data.Maybe
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -71,7 +71,7 @@ initialProposerState pid topology = ProposerState
 {-| Handle the event that a new value has been chosen, which removes data about
 preceding instances and may also update the topology. -}
 handleChosen
-  :: (MonadState (ProposerState q v) m, MonadWriter [PrepareMessage] m)
+  :: (MonadState (ProposerState q v) m, MonadEmitter m, Emitted m ~ PrepareMessage)
   => InstanceId -> TopologyVersion -> q -> m ()
 handleChosen instanceId topologyVersion topology = removeChosenInstances >> bumpProposalTopologies
   where
@@ -109,10 +109,10 @@ handleChosen instanceId topologyVersion topology = removeChosenInstances >> bump
       maybeMinInstance <- gets $ fmap (fst . fst) . M.minViewWithKey . pprProposersByInstance
       minMultiInstance <- gets pprMinMultiInstance
 
-      tell [Prepare (fromMaybe minMultiInstance maybeMinInstance) newProposalId MultiPrepare]
+      emit $ Prepare (fromMaybe minMultiInstance maybeMinInstance) newProposalId MultiPrepare
 
 spawnInstanceProposersTo
-  :: (Quorum q, MonadState (ProposerState q v) m, MonadWriter [ProposedMessage q v] m)
+  :: (Quorum q, MonadState (ProposerState q v) m, MonadEmitter m, Emitted m ~ ProposedMessage q v)
   => InstanceId -> m ()
 spawnInstanceProposersTo newMinMultiInstance = do
   oldMinMultiInstance <- gets pprMinMultiInstance
@@ -121,7 +121,7 @@ spawnInstanceProposersTo newMinMultiInstance = do
 
     promisesState <- case pprPromises s of
       ReadyToPropose -> do
-        tell [Proposed newInstance (pprProposalId s) NoOp]
+        emit $ Proposed newInstance (pprProposalId s) NoOp
         return ValueProposed
 
       CollectingMultiPromises promises -> return CollectingPromises
@@ -141,7 +141,7 @@ spawnInstanceProposersTo newMinMultiInstance = do
 accept any earlier-numbered proposals. May result in some 'ProposedMessage'
 outputs which should be broadcast to all acceptors. -}
 handlePromise
-  :: (MonadState (ProposerState q v) m, MonadWriter [ProposedMessage q v] m, Quorum q)
+  :: (MonadState (ProposerState q v) m, MonadEmitter m, Emitted m ~ ProposedMessage q v, Quorum q)
   => AcceptorId -> PromisedMessage q v -> m ()
 handlePromise acceptorId (Promised instanceId proposalId MultiPromise) = do
   spawnInstanceProposersTo instanceId
@@ -169,11 +169,10 @@ handlePromise acceptorId (Promised instanceId proposalId (Bound previousProposal
   handleIndividualPromise acceptorId instanceId proposalId (Just $ AcceptedValue previousProposal value)
 
 handleIndividualPromise
-  :: (MonadState (ProposerState q v) m, MonadWriter [ProposedMessage q v] m, Quorum q)
+  :: (MonadState (ProposerState q v) m, MonadEmitter m, Emitted m ~ ProposedMessage q v, Quorum q)
   => AcceptorId -> InstanceId -> ProposalId -> Maybe (AcceptedValue q v) -> m ()
 handleIndividualPromise acceptorId instanceId proposalId maybeAcceptedValue = do
   spawnInstanceProposersTo $ suc instanceId
-  let mkProposedMessage = Proposed instanceId proposalId
   topology <- gets pprTopology
   maybeInstanceProposerState <- gets $ M.lookup instanceId . pprProposersByInstance
   case maybeInstanceProposerState of
@@ -188,7 +187,7 @@ handleIndividualPromise acceptorId instanceId proposalId maybeAcceptedValue = do
 
         newPromisesState <- if isQuorum topology cprPromises'
           then do
-            tell [mkProposedMessage $ maybe (iprValue ipr) valueFromAccepted cprMaxAccepted']
+            emit $ Proposed instanceId proposalId $ maybe (iprValue ipr) valueFromAccepted cprMaxAccepted'
             return ValueProposed
           else return CollectingPromises { cprPromises = cprPromises', cprMaxAccepted = cprMaxAccepted' }
 

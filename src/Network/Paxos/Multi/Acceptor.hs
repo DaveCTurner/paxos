@@ -17,7 +17,6 @@ module Network.Paxos.Multi.Acceptor
 
 import Control.Monad.Reader
 import Control.Monad.State
-import Control.Monad.Writer
 import qualified Data.Map as M
 import qualified Data.RangeMap as RM
 
@@ -67,7 +66,7 @@ initialAcceptorState = AcceptorState
 outputs that should be sent to the proposer that originally sent the
 'PrepareMessage'. -}
 handlePrepare
-  :: (MonadWriter [PromisedMessage q v] m, MonadState (AcceptorState q v) m)
+  :: (MonadEmitter m, Emitted m ~ PromisedMessage q v, MonadState (AcceptorState q v) m)
   => PrepareMessage -> m ()
 handlePrepare (Prepare instanceId proposalId MultiPrepare) = do
 
@@ -102,7 +101,7 @@ acceptancesNotBefore instanceId = do
 {-| Handle a 'ProposedMessage', which may result in an 'AcceptedMessage' output
 that should be broadcast to all learners. -}
 handleProposed
-  :: (MonadWriter [AcceptedMessage q v] m, MonadState (AcceptorState q v) m)
+  :: (MonadEmitter m, Emitted m ~ AcceptedMessage q v, MonadState (AcceptorState q v) m)
   => (ProposedMessage q v) -> m ()
 handleProposed (Proposed instanceId proposalId value) = do
 
@@ -115,21 +114,21 @@ handleProposed (Proposed instanceId proposalId value) = do
   when isAcceptable $ tellAccept instanceId proposalId value
 
 tellPromise
-  :: (MonadWriter [PromisedMessage q v] m, MonadState (AcceptorState q v) m)
+  :: (MonadEmitter m, Emitted m ~ PromisedMessage q v, MonadState (AcceptorState q v) m)
   => InstanceId -> ProposalId -> (PromiseType q v) -> m ()
 tellPromise i p t = do
   let msg = Promised i p t
-  tell [msg]
+  emit msg
   let promiseRange = case t of
         MultiPromise -> RM.inclusiveUnbounded i
         _     -> RM.inclusiveInclusive i i
   modify $ \s -> s { accMinAcceptableProposal = RM.insertWith max promiseRange p $ accMinAcceptableProposal s }
 
 tellAccept
-  :: (MonadWriter [AcceptedMessage q v] m, MonadState (AcceptorState q v) m)
+  :: (MonadEmitter m, Emitted m ~ AcceptedMessage q v, MonadState (AcceptorState q v) m)
   => InstanceId -> ProposalId -> Value q v -> m ()
 tellAccept i p v = do
-  tell [Accepted i p v]
+  emit $ Accepted i p v
   modify $ \s -> s { accLatestAcceptanceByInstance
       = M.insertWith max i (AcceptedValue p v) $ accLatestAcceptanceByInstance s }
 

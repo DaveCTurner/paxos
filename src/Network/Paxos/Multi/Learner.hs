@@ -21,7 +21,6 @@ import Control.Applicative
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Trans.Maybe
-import Control.Monad.Writer
 import Data.Void
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -79,7 +78,7 @@ nextInstanceTopologyVersion = lnrTopologyVersionForFirstUnchosenInstance
 {-| Handle an 'AcceptedMessage', which may result in a 'ChosenMessage' indicating that a value
 has been chosen. -}
 handleAccepted
-  :: (MonadWriter [ChosenMessage q v] m, MonadState (LearnerState q v) m, Quorum q)
+  :: (MonadEmitter m, Emitted m ~ ChosenMessage q v, MonadState (LearnerState q v) m, Quorum q)
   => AcceptorId -> AcceptedMessage q v -> m ()
 handleAccepted acceptorId (Accepted instanceId proposalId value) = do
 
@@ -162,7 +161,7 @@ unJust mma = lift mma >>= \case
   Nothing -> exitLearner
   Just a -> return a
 
-chooseQuorateValues :: (Quorum q, MonadWriter [ChosenMessage q v] m, MonadState (LearnerState q v) m)
+chooseQuorateValues :: (Quorum q, MonadEmitter m, Emitted m ~ ChosenMessage q v, MonadState (LearnerState q v) m)
   => LearnerT m a
 chooseQuorateValues = do
   instanceToChoose <- getNextInstance
@@ -205,10 +204,10 @@ chooseQuorateValues = do
   exitLearner
 
 tellChosen
-  :: (MonadWriter [ChosenMessage q v] m, MonadState (LearnerState q v) m)
+  :: (MonadEmitter m, Emitted m ~ ChosenMessage q v, MonadState (LearnerState q v) m)
   => InstanceId -> ProposalId -> Value q v -> m ()
 tellChosen instanceId proposalId value = do
-  tell [Chosen instanceId value]
+  emit $ Chosen instanceId value
   modify $ \s -> s { lnrChosenValues
     = M.insertWith max instanceId (AcceptedValue proposalId value)
       $ lnrChosenValues s }

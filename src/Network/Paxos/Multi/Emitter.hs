@@ -1,6 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Network.Paxos.Multi.Emitter where
 
@@ -14,7 +15,8 @@ import Network.Paxos.Multi.Types
 newtype EmitterT w m a = EmitterT (WriterT (DL.DList w) m a)
   deriving (Functor, Applicative, Monad)
 
-instance Monad m => MonadEmitter w (EmitterT w m) where
+instance Monad m => MonadEmitter (EmitterT w m) where
+  type Emitted (EmitterT w m) = w
   emit = EmitterT . tell . DL.singleton
 
 runEmitterT :: Monad m => EmitterT w m a -> m (a, [w])
