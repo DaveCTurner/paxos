@@ -90,14 +90,19 @@ handlePrepare (Prepare givenInstanceId proposalId MultiPrepare) = do
         (M.fromAscList
           [(i, Nothing) | i <- takeWhile (< instanceGreaterThanAllAcceptances) (iterate suc instanceId)])
 
-  forM_ (M.toList pidMap) $ \(i, maybeAcceptedProposalValue)
-    -> tellPromise i proposalId $ maybe Free boundFromAccepted maybeAcceptedProposalValue
+  forM_ (M.toList pidMap) $ \(i, maybeAcceptedProposalValue) -> case maybeAcceptedProposalValue of
+    Nothing -> tellPromise i proposalId Free
+    Just (AcceptedValue acceptedProposal value) -> when (acceptedProposal < proposalId)
+      $ tellPromise i proposalId $ Bound acceptedProposal value
 
   tellPromise instanceGreaterThanAllAcceptances proposalId MultiPromise
 
 handlePrepare (Prepare instanceId proposalId SinglePrepare) = whenActive instanceId $ do
   maybeCurrentAcceptance <- gets $ M.lookup instanceId . accLatestAcceptanceByInstance
-  tellPromise instanceId proposalId $ maybe Free boundFromAccepted maybeCurrentAcceptance
+  case maybeCurrentAcceptance of
+    Nothing -> tellPromise instanceId proposalId Free
+    Just (AcceptedValue acceptedProposal value) -> when (acceptedProposal < proposalId)
+      $ tellPromise instanceId proposalId $ Bound acceptedProposal value
 
 acceptancesNotBefore :: MonadState (AcceptorState q v) m
   => InstanceId -> m (M.Map InstanceId (AcceptedValue q v))
