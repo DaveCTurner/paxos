@@ -49,10 +49,10 @@ lowest-numbered instance out from the infinite set and assign it a value.
 module Network.Paxos.Multi.Proposer
   ( ProposerState
   , initialProposerState
+  , joiningProposerState
   , handlePromise
   , spawnNextInstance
   , handleChosen
-  , pushTopology
   ) where
 
 import Control.Monad.Reader

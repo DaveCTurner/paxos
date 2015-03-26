@@ -79,8 +79,8 @@ joiningLearnerState instanceId topology = LearnerState
   , lnrFirstUnchosenTopology                   = topology
   }
 
-{-| Handle an 'AcceptedMessage', which may result in sequence of 'ChosenMessage' outputs
-indicating that values were chosen. -}
+{-| Handle an 'AcceptedMessage', which may result in one or more
+'ChosenMessage' outputs indicating that values were chosen. -}
 handleAccepted
   :: (MonadEmitter m, Emitted m ~ ChosenMessage q v, MonadState (LearnerState q v) m, Quorum q)
   => AcceptorId -> AcceptedMessage q v -> m ()
