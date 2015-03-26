@@ -204,16 +204,15 @@ handlePromise acceptorId (Promised instanceId proposalId (Bound previousProposal
 bumpMultiProposalId :: MonadState (ProposerState q v) m => ProposalId -> m ()
 bumpMultiProposalId newMultiProposalId = do
   oldMultiProposalId <- gets pprMultiProposalId
-  when (oldMultiProposalId     <       newMultiProposalId
-     && oldMultiProposalId `canBumpTo` newMultiProposalId)
+  maxTopologyVersion <- gets $ topoVersion . pprTopology
+
+  when (oldMultiProposalId < newMultiProposalId
+       && pidTopologyVersion newMultiProposalId <= maxTopologyVersion
+       && pidProposerId      newMultiProposalId == pidProposerId oldMultiProposalId)
     $ modify $ \s -> s
       { pprMultiProposalId = newMultiProposalId
       , pprMultiPromises = CollectingMultiPromises S.empty
       }
-
-canBumpTo :: ProposalId -> ProposalId -> Bool
-canBumpTo p1 p2 = pidTopologyVersion p1 == pidTopologyVersion p2
-               && pidProposerId      p1 == pidProposerId      p2
 
 handleIndividualPromise
   :: (MonadState (ProposerState q v) m, MonadEmitter m, Emitted m ~ ProposedMessage q v, Quorum q)
@@ -226,11 +225,15 @@ handleIndividualPromise acceptorId instanceId proposalId maybeAcceptedValue = do
     Nothing -> return () -- Instance is obsolete
 
     Just ipr -> case compare (iprProposalId ipr) proposalId of
-      LT ->
-        -- Promise is for a higher-numbered proposal, but with the same topology.
+      LT -> do
+        -- Promise is for a higher-numbered proposal,
         -- This means that the current proposal has been abandoned. Start again
         -- with the new proposal.
-        when (iprProposalId ipr `canBumpTo` proposalId)
+
+        maxTopologyVersion <- gets $ topoVersion . pprTopology
+        when (pidTopologyVersion proposalId <= maxTopologyVersion
+           && pidProposerId      proposalId == pidProposerId (iprProposalId ipr))
+
           $ collectPromise ipr
               { iprProposalId    = proposalId
               , iprPromisesState = CollectingPromises
