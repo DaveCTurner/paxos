@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE LambdaCase #-}
@@ -96,7 +95,7 @@ handleAccepted acceptorId (Accepted instanceId proposalId value) = do
       { lnrAcceptances = M.insertWith
           (M.unionWith combineAcceptances)
           instanceId
-          (M.singleton proposalId $ Acceptances
+          (M.singleton proposalId Acceptances
               { accSet = S.singleton acceptorId
               , accValue = value
               })

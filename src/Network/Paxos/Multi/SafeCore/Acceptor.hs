@@ -1,6 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE LambdaCase #-}
 
@@ -118,14 +116,13 @@ acceptancesNotBefore :: MonadState (AcceptorState q v) m
 acceptancesNotBefore instanceId = do
   (_, maybeCurrentAcceptance, futureAcceptances)
     <- gets $ M.splitLookup instanceId . accLatestAcceptanceByInstance
-  return $ maybe id (M.insert instanceId) maybeCurrentAcceptance
-         $ futureAcceptances
+  return $ maybe id (M.insert instanceId) maybeCurrentAcceptance futureAcceptances
 
 {-| Handle a 'ProposedMessage', which may result in an 'AcceptedMessage' output
 that should be broadcast to all learners. -}
 handleProposed
   :: (MonadEmitter m, Emitted m ~ AcceptedMessage q v, MonadState (AcceptorState q v) m)
-  => (ProposedMessage q v) -> m ()
+  => ProposedMessage q v -> m ()
 handleProposed (Proposed instanceId proposalId value) = whenActive instanceId $ do
 
   maybeMinAcceptableProposal <- gets $ RM.lookup instanceId . accMinAcceptableProposal
@@ -138,7 +135,7 @@ handleProposed (Proposed instanceId proposalId value) = whenActive instanceId $ 
 
 tellPromise
   :: (MonadEmitter m, Emitted m ~ PromisedMessage q v, MonadState (AcceptorState q v) m)
-  => InstanceId -> ProposalId -> (PromiseType q v) -> m ()
+  => InstanceId -> ProposalId -> PromiseType q v -> m ()
 tellPromise i p t = do
   emit $ Promised i p t
   let promiseRange = case t of
