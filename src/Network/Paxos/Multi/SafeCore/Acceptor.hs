@@ -29,7 +29,7 @@ Acceptors satisfy the following invariants:
 
 -}
 
-module Network.Paxos.Multi.Acceptor
+module Network.Paxos.Multi.SafeCore.Acceptor
   ( AcceptorState
   , initialAcceptorState
   , handlePrepare

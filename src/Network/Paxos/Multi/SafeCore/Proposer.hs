@@ -46,7 +46,7 @@ lowest-numbered instance out from the infinite set and assign it a value.
 
 -}
 
-module Network.Paxos.Multi.Proposer
+module Network.Paxos.Multi.SafeCore.Proposer
   ( ProposerState
   , initialProposerState
   , joiningProposerState

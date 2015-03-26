@@ -27,7 +27,7 @@ system.
 
 -}
 
-module Network.Paxos.Multi.Learner
+module Network.Paxos.Multi.SafeCore.Learner
   ( LearnerState
   , initialLearnerState
   , joiningLearnerState
