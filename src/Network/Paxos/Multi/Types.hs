@@ -2,6 +2,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Network.Paxos.Multi.Types where
 
@@ -50,6 +51,38 @@ instance (Show (Alteration q), Show q, Show v) => Show (Value q v)
   show (SetTopology q) = "SetTopology (" ++ show q ++ ")"
   show  NoOp = "NoOp"
   show (OtherValue v) = "OtherValue (" ++ show v ++ ")"
+
+data TopologyHistory q = TopologyHistory
+  { topoCurr :: q
+  , topoPrev :: q
+  , topoVersion :: TopologyVersion
+  }
+
+initialTopology :: Quorum q => q -> TopologyHistory q
+initialTopology topology = TopologyHistory
+  { topoCurr    = topology
+  , topoPrev    = noQuorums
+  , topoVersion = TopologyVersion 0
+  }
+
+pushTopology :: Quorum q => Value q v -> TopologyHistory q -> TopologyHistory q
+pushTopology (AlterTopology alteration) TopologyHistory{..} = TopologyHistory
+  { topoCurr    = alterQuorum alteration topoCurr
+  , topoPrev    =                        topoCurr
+  , topoVersion = suc topoVersion
+  }
+pushTopology (SetTopology topology) TopologyHistory{..} = TopologyHistory
+  { topoCurr    = topology
+  , topoPrev    = noQuorums
+  , topoVersion = suc (suc topoVersion)
+  }
+pushTopology _ th = th
+
+getTopology :: Quorum q => ProposalId -> TopologyHistory q -> Maybe q
+getTopology ProposalId{..} TopologyHistory{..}
+  | topoVersion ==     pidTopologyVersion = Just topoCurr
+  | topoVersion == suc pidTopologyVersion = Just topoPrev
+  | otherwise = Nothing
 
 data PrepareType         = MultiPrepare | SinglePrepare
 data PromiseType     q v = MultiPromise | Free | Bound ProposalId (Value q v)
