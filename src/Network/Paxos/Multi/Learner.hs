@@ -31,9 +31,6 @@ module Network.Paxos.Multi.Learner
   ( LearnerState
   , initialLearnerState
   , joiningLearnerState
-  , nextInstance
-  , nextInstanceTopology
-  , nextInstanceTopologyVersion
   , handleAccepted
   ) where
 
@@ -47,11 +44,23 @@ import qualified Data.Set as S
 
 import Network.Paxos.Multi.Types
 
+data Acceptances q v = Acceptances
+  { accSet :: S.Set AcceptorId
+  , accValue :: Value q v
+  }
+
+combineAcceptances :: Acceptances q v -> Acceptances q v -> Acceptances q v
+combineAcceptances Acceptances{accSet=set1, accValue=v1} Acceptances{accSet=set2} = Acceptances
+  { accSet = S.union set1 set2
+{- Only ever combine acceptances for the same instance/proposal, for which the
+accepted values are always equal. -}
+  , accValue = v1
+  }
+
 {-| The state of an individual learner. -}
 data LearnerState q v = LearnerState
-  { lnrAcceptances       :: M.Map InstanceId (M.Map ProposalId (S.Set AcceptorId))
-  , lnrLastValueAccepted :: M.Map InstanceId (M.Map ProposalId (Value q v))
-  , lnrChosenValues      :: M.Map InstanceId (AcceptedValue q v)
+  { lnrAcceptances                             :: M.Map InstanceId (M.Map ProposalId (Acceptances q v))
+  , lnrFirstUnchosenInstance                   :: InstanceId
   , lnrTopologyVersionForFirstUnchosenInstance :: TopologyVersion
   , lnrTopologyForFirstUnchosenInstance        :: q
   , lnrTopologyBeforeFirstUnchosenInstance     :: q
@@ -59,41 +68,21 @@ data LearnerState q v = LearnerState
 
 {-| The initial state of an individual learner, before it has processed any
 messages and before any values have been chosen. -}
-initialLearnerState :: Quorum q => TopologyVersion -> q -> LearnerState q v
-initialLearnerState v q = LearnerState
-  { lnrAcceptances       = M.empty
-  , lnrLastValueAccepted = M.empty
-  , lnrChosenValues      = M.empty
-  , lnrTopologyVersionForFirstUnchosenInstance = v
-  , lnrTopologyForFirstUnchosenInstance        = q
-  , lnrTopologyBeforeFirstUnchosenInstance     = noQuorums
-  }
+initialLearnerState :: Quorum q => q -> LearnerState q v
+initialLearnerState q = joiningLearnerState (InstanceId 0) (TopologyVersion 0) q noQuorums
 
 {-| The starting state of a learner which joins the cluster after it has been
 running for a while, so the initial sequence of values has been chosen. It only
-needs to know the most recent value and the current and previous topologies.
--}
-joiningLearnerState :: InstanceId -> AcceptedValue q v -> TopologyVersion -> q -> q -> LearnerState q v
-joiningLearnerState i a v qCurrent qPrevious = LearnerState
-  { lnrAcceptances       = M.empty
-  , lnrLastValueAccepted = M.empty
-  , lnrChosenValues      = M.singleton i a
+needs to know at what instance to start working from and the current and
+previous topologies.  -}
+joiningLearnerState :: InstanceId -> TopologyVersion -> q -> q -> LearnerState q v
+joiningLearnerState i v qCurrent qPrevious = LearnerState
+  { lnrAcceptances                             = M.empty
+  , lnrFirstUnchosenInstance                   = i
   , lnrTopologyVersionForFirstUnchosenInstance = v
   , lnrTopologyForFirstUnchosenInstance        = qCurrent
   , lnrTopologyBeforeFirstUnchosenInstance     = qPrevious
   }
-
-{-| Get the id of the first instance whose value has not yet been learned. -}
-nextInstance :: LearnerState q v -> InstanceId
-nextInstance = maybe (InstanceId 0) (suc . fst . fst) . M.maxViewWithKey . lnrChosenValues
-
-{-| Get the topology of the first instance whose value has not yet been learned. -}
-nextInstanceTopology :: LearnerState q v -> q
-nextInstanceTopology = lnrTopologyForFirstUnchosenInstance
-
-{-| Get the topology version of the first instance whose value has not yet been learned. -}
-nextInstanceTopologyVersion :: LearnerState q v -> TopologyVersion
-nextInstanceTopologyVersion = lnrTopologyVersionForFirstUnchosenInstance
 
 {-| Handle an 'AcceptedMessage', which may result in a 'ChosenMessage' indicating that a value
 has been chosen. -}
@@ -102,55 +91,35 @@ handleAccepted
   => AcceptorId -> AcceptedMessage q v -> m ()
 handleAccepted acceptorId (Accepted instanceId proposalId value) = do
 
-  maybeChosenValue <- gets $ M.lookup instanceId . lnrChosenValues
+  oldFirstUnchosenInstance <- gets lnrFirstUnchosenInstance
+  when (instanceId >= oldFirstUnchosenInstance) $ do
 
-  case maybeChosenValue of
-    -- TODO this could be outside the core
-    Just (AcceptedValue chosenProposal chosenValue)
-      -> when (chosenProposal < proposalId)
-          $ tellChosen instanceId proposalId chosenValue
+    minInstanceTopologyVersion <- gets lnrTopologyVersionForFirstUnchosenInstance
+    when (minInstanceTopologyVersion <= suc (pidTopologyVersion proposalId)) $ do
 
-    Nothing -> do
-      minInstanceTopologyVersion <- gets lnrTopologyVersionForFirstUnchosenInstance
+      modify $ \s -> s
+        { lnrAcceptances = M.insertWith
+            (M.unionWith combineAcceptances)
+            instanceId
+            (M.singleton proposalId $ Acceptances
+                { accSet = S.singleton acceptorId
+                , accValue = value
+                })
+            (lnrAcceptances s)
+        }
 
-      when (minInstanceTopologyVersion <= suc (pidTopologyVersion proposalId)) $ do
-
-        modify $ \s -> s
-          { lnrAcceptances
-              = M.insertWith
-                    (M.unionWith S.union)
-                    instanceId
-                    (M.singleton proposalId $ S.singleton acceptorId)
-                    (lnrAcceptances s)
-
-          , lnrLastValueAccepted
-              = M.insertWith
-                    M.union
-                    instanceId
-                    (M.singleton proposalId value)
-                    (lnrLastValueAccepted s)
-          }
-
-        oldNextInstanceToChoose <- gets nextInstance
-        newNextInstanceToChoose <- runLearnerT chooseQuorateValues oldNextInstanceToChoose
-
-        -- TODO the rest of this could be outside the core
+      when (instanceId == oldFirstUnchosenInstance) $ do
+        newFirstUnchosenInstance <- runLearnerT chooseQuorateValues oldFirstUnchosenInstance
         newMinInstanceTopologyVersion <- gets lnrTopologyVersionForFirstUnchosenInstance
+        when (oldFirstUnchosenInstance < newFirstUnchosenInstance) $ do
 
-        when (oldNextInstanceToChoose < newNextInstanceToChoose) $ do
+          let removeOldTopologies = M.filterWithKey
+                (\pid _ -> newMinInstanceTopologyVersion <= suc (pidTopologyVersion pid))
 
-          let removeOldTopologies :: M.Map ProposalId a -> M.Map ProposalId a
-              removeOldTopologies = M.filterWithKey (\pid _ -> newMinInstanceTopologyVersion <= suc (pidTopologyVersion pid))
-
-              removeChosenInstances :: M.Map InstanceId a -> M.Map InstanceId a
-              removeChosenInstances = removeKeysLessThan newNextInstanceToChoose
-
-              tidyMap :: M.Map InstanceId (M.Map ProposalId a) -> M.Map InstanceId (M.Map ProposalId a)
-              tidyMap = M.map removeOldTopologies . removeChosenInstances
+              removeChosenInstances = removeKeysLessThan newFirstUnchosenInstance
 
           modify $ \s -> s
-            { lnrAcceptances       = tidyMap $ lnrAcceptances s
-            , lnrLastValueAccepted = tidyMap $ lnrLastValueAccepted s
+            { lnrAcceptances = M.map removeOldTopologies $ removeChosenInstances $ lnrAcceptances s
             }
 
 removeKeysLessThan :: InstanceId -> M.Map InstanceId a -> M.Map InstanceId a
@@ -194,30 +163,28 @@ chooseQuorateValues = do
 
   acceptanceMap <- unJust $ gets $ M.lookup instanceToChoose . lnrAcceptances
 
-  forM_ (M.toList acceptanceMap) $ \(proposalId, acceptorSet) -> do
+  forM_ (M.toList acceptanceMap) $ \(proposalId, Acceptances{..}) -> do
     quorum <- lift $ gets $ lnrQuorum $ pidTopologyVersion proposalId
-    when (isQuorum quorum acceptorSet) $ do
-      lastValuesMap <- unJust $ gets   $ M.lookup instanceToChoose . lnrLastValueAccepted
-      chosenValue   <- unJust $ return $ M.lookup proposalId lastValuesMap
+    when (isQuorum quorum accSet) $ do
 
-      case chosenValue of
-        AlterTopology alteration -> lift $ modify $ \s -> s
-          { lnrTopologyVersionForFirstUnchosenInstance
-            = suc (lnrTopologyVersionForFirstUnchosenInstance s)
-          , lnrTopologyForFirstUnchosenInstance    = alterQuorum alteration (lnrTopologyForFirstUnchosenInstance s)
-          , lnrTopologyBeforeFirstUnchosenInstance = lnrTopologyForFirstUnchosenInstance s
-          }
+      let pushTopology f = lift $ modify $ \s -> s
+            { lnrTopologyVersionForFirstUnchosenInstance
+              = suc (lnrTopologyVersionForFirstUnchosenInstance s)
+            , lnrTopologyForFirstUnchosenInstance    = f (lnrTopologyForFirstUnchosenInstance s)
+            , lnrTopologyBeforeFirstUnchosenInstance =    lnrTopologyForFirstUnchosenInstance s
+            }
 
-        SetTopology newTopology -> lift $ modify $ \s -> s
-          { lnrTopologyVersionForFirstUnchosenInstance
-            = suc (suc (lnrTopologyVersionForFirstUnchosenInstance s))
-          , lnrTopologyForFirstUnchosenInstance    = newTopology
-          , lnrTopologyBeforeFirstUnchosenInstance = noQuorums
-          }
+      case accValue of
+        AlterTopology alteration ->
+          pushTopology $ alterQuorum alteration
+
+        SetTopology newTopology -> do
+          pushTopology $ const noQuorums
+          pushTopology $ const newTopology
 
         _ -> return ()
 
-      lift $ tellChosen instanceToChoose proposalId chosenValue
+      lift $ tellChosen instanceToChoose accValue
       advanceInstance
       chooseQuorateValues
 
@@ -225,9 +192,7 @@ chooseQuorateValues = do
 
 tellChosen
   :: (MonadEmitter m, Emitted m ~ ChosenMessage q v, MonadState (LearnerState q v) m)
-  => InstanceId -> ProposalId -> Value q v -> m ()
-tellChosen instanceId proposalId value = do
+  => InstanceId -> Value q v -> m ()
+tellChosen instanceId value = do
   emit $ Chosen instanceId value
-  modify $ \s -> s { lnrChosenValues
-    = M.insertWith max instanceId (AcceptedValue proposalId value)
-      $ lnrChosenValues s }
+  modify $ \s -> s { lnrFirstUnchosenInstance = max (suc instanceId) (lnrFirstUnchosenInstance s) }
