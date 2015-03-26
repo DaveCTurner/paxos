@@ -61,27 +61,23 @@ accepted values are always equal. -}
 data LearnerState q v = LearnerState
   { lnrAcceptances                             :: M.Map InstanceId (M.Map ProposalId (Acceptances q v))
   , lnrFirstUnchosenInstance                   :: InstanceId
-  , lnrTopologyVersionForFirstUnchosenInstance :: TopologyVersion
-  , lnrTopologyForFirstUnchosenInstance        :: q
-  , lnrTopologyBeforeFirstUnchosenInstance     :: q
+  , lnrFirstUnchosenTopology                   :: TopologyHistory q
   }
 
 {-| The initial state of an individual learner, before it has processed any
 messages and before any values have been chosen. -}
 initialLearnerState :: Quorum q => q -> LearnerState q v
-initialLearnerState q = joiningLearnerState (InstanceId 0) (TopologyVersion 0) q noQuorums
+initialLearnerState topology = joiningLearnerState (InstanceId 0) $ initialTopology topology
 
 {-| The starting state of a learner which joins the cluster after it has been
 running for a while, so the initial sequence of values has been chosen. It only
 needs to know at what instance to start working from and the current and
 previous topologies.  -}
-joiningLearnerState :: InstanceId -> TopologyVersion -> q -> q -> LearnerState q v
-joiningLearnerState i v qCurrent qPrevious = LearnerState
+joiningLearnerState :: InstanceId -> TopologyHistory q -> LearnerState q v
+joiningLearnerState instanceId topology = LearnerState
   { lnrAcceptances                             = M.empty
-  , lnrFirstUnchosenInstance                   = i
-  , lnrTopologyVersionForFirstUnchosenInstance = v
-  , lnrTopologyForFirstUnchosenInstance        = qCurrent
-  , lnrTopologyBeforeFirstUnchosenInstance     = qPrevious
+  , lnrFirstUnchosenInstance                   = instanceId
+  , lnrFirstUnchosenTopology                   = topology
   }
 
 {-| Handle an 'AcceptedMessage', which may result in sequence of 'ChosenMessage' outputs
@@ -163,30 +159,14 @@ chooseQuorateValues = do
 
   acceptanceMap <- unJust $ gets $ M.lookup instanceToChoose . lnrAcceptances
 
-  forM_ (M.toList acceptanceMap) $ \(proposalId, Acceptances{..}) -> do
-    quorum <- lift $ gets $ lnrQuorum $ pidTopologyVersion proposalId
-    when (isQuorum quorum accSet) $ do
-
-      let pushTopology f = lift $ modify $ \s -> s
-            { lnrTopologyVersionForFirstUnchosenInstance
-              = suc (lnrTopologyVersionForFirstUnchosenInstance s)
-            , lnrTopologyForFirstUnchosenInstance    = f (lnrTopologyForFirstUnchosenInstance s)
-            , lnrTopologyBeforeFirstUnchosenInstance =    lnrTopologyForFirstUnchosenInstance s
-            }
-
-      case accValue of
-        AlterTopology alteration ->
-          pushTopology $ alterQuorum alteration
-
-        SetTopology newTopology -> do
-          pushTopology $ const noQuorums
-          pushTopology $ const newTopology
-
-        _ -> return ()
-
-      lift $ tellChosen instanceToChoose accValue
-      advanceInstance
-      chooseQuorateValues
+  forM_ (M.toList acceptanceMap) $ \(proposalId, Acceptances{..}) -> 
+    gets (getTopology proposalId . lnrTopology) >>= \case
+      Just quorum | isQuorum quorum accSet -> do
+        lift $ modify $ \s -> s { lnrTopology = pushTopology accValue $ lnrTopology s }
+        lift $ tellChosen instanceToChoose accValue
+        advanceInstance
+        chooseQuorateValues
+      _ -> return ()
 
   exitLearner
 
