@@ -84,8 +84,8 @@ joiningLearnerState i v qCurrent qPrevious = LearnerState
   , lnrTopologyBeforeFirstUnchosenInstance     = qPrevious
   }
 
-{-| Handle an 'AcceptedMessage', which may result in a 'ChosenMessage' indicating that a value
-has been chosen. -}
+{-| Handle an 'AcceptedMessage', which may result in sequence of 'ChosenMessage' outputs
+indicating that values were chosen. -}
 handleAccepted
   :: (MonadEmitter m, Emitted m ~ ChosenMessage q v, MonadState (LearnerState q v) m, Quorum q)
   => AcceptorId -> AcceptedMessage q v -> m ()
